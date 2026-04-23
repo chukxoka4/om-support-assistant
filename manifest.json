@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "OM Support Assistant",
+  "version": "0.1.0",
+  "description": "AI-assisted drafting for OptinMonster, TrustPulse, and Beacon support tickets. Provider-agnostic (Gemini, Claude, OpenAI).",
+  "permissions": [
+    "sidePanel",
+    "contextMenus",
+    "storage",
+    "notifications",
+    "unlimitedStorage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://om.wpsiteassist.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Open OM Support Assistant"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["prompts/library.json", "prompts/house-style.md", "prompts/products/*.md"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

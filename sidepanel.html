@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OM Support Assistant</title>
+  <style>
+    body { font: 13px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 12px; color: #222; }
+    h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.4px; color: #555; }
+    .row { margin-bottom: 10px; }
+    select, textarea, input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
+    textarea { min-height: 60px; resize: vertical; }
+    button { padding: 6px 10px; border-radius: 4px; border: 1px solid #ccc; background: #f5f5f5; cursor: pointer; }
+    button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    button.primary:hover { background: #1557b0; }
+    .preview { border: 1px solid #ddd; border-radius: 4px; padding: 10px; min-height: 120px; background: #fafafa; }
+    .preview[contenteditable="true"] { background: #fff; }
+    .meta { font-size: 11px; color: #888; margin-top: 4px; }
+    .error { color: #c00; font-size: 12px; margin-top: 6px; }
+    .btn-row { display: flex; gap: 6px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <h3>Selection</h3>
+    <div id="selection-preview" class="preview" contenteditable="false"></div>
+    <div class="meta" id="selection-meta"></div>
+  </div>
+
+  <div class="row">
+    <h3>Action</h3>
+    <select id="action-select"></select>
+  </div>
+
+  <div class="row" id="provider-row" style="display:none">
+    <h3>Provider</h3>
+    <select id="provider-select"></select>
+  </div>
+
+  <div class="row">
+    <h3>Notes (optional)</h3>
+    <textarea id="notes" placeholder="Anything specific to steer the draft…"></textarea>
+  </div>
+
+  <div class="btn-row">
+    <button id="generate" class="primary">Generate draft</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <div class="row" style="margin-top: 14px">
+    <h3>Draft</h3>
+    <div id="draft-preview" class="preview" contenteditable="true"></div>
+    <div class="btn-row">
+      <button id="insert" class="primary">Insert into ticket</button>
+      <button id="copy">Copy</button>
+    </div>
+    <div class="meta" id="draft-meta"></div>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
