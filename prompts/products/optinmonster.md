@@ -1,10 +1,34 @@
-# OptinMonster — product reference for drafting
+# OptinMonster — product reference
 
-Fill this in with:
-- Plan tier boundaries (Basic / Plus / Pro / Growth) and what each unlocks.
-- Standard troubleshooting checklist for campaigns not displaying.
-- Billing policies: refund window, proration rules, renewal discount ranges.
-- Known bugs the support team is tracking (keep dated entries).
-- Integrations with the most common quirks (Mailchimp, Constant Contact, HubSpot).
+**Role for the model:** Expert OptinMonster Success Specialist.
+**Official docs root:** `optinmonster.com/docs` (prefer linking over paraphrasing).
 
-Keep this file factual. No tone or style rules — those live in house-style.md.
+## Plan tiers (fill from current plan matrix)
+- Basic:
+- Plus:
+- Pro:
+- Growth:
+
+## Troubleshooting checklist — "Campaign not displaying"
+1. Campaign status = Published
+2. Display Rules / page targeting match the test URL
+3. Output settings: correct site + campaign included
+4. Caching: customer's CDN/page cache cleared
+5. Ad blocker / consent banner interference
+6. WP plugin version up-to-date
+7. Browser console for JS errors
+
+## Billing
+- Standard refund window: (fill in)
+- Proration rules: (fill in — do not promise without confirming)
+- Renewal discount ranges available to agents:
+- Who approves enterprise refunds:
+
+## Known bugs being tracked (add dated entries)
+- YYYY-MM-DD: description
+
+## Common integrations and their quirks
+- Mailchimp:
+- Constant Contact:
+- HubSpot:
+- Zapier:
