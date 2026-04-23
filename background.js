@@ -1,90 +1,50 @@
-import { compose } from "./lib/compose.js";
+// Service worker: context menu for "Send to OM Assistant", URL revisit notifications.
+// Communication with sidepanel is via chrome.storage (not tabs.sendMessage).
+
 import { getDraftsByConversation, getDismissal, setDismissal } from "./lib/storage.js";
-import { getLibrary } from "./lib/prompts.js";
 
 const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await rebuildContextMenus();
-});
-
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.library_override) rebuildContextMenus();
-});
-
-async function rebuildContextMenus() {
-  await chrome.contextMenus.removeAll();
+chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: "om-assistant-root",
-    title: "OM Assistant",
-    contexts: ["selection", "editable"]
+    id: "om-send-to-assistant",
+    title: "Send to OM Assistant",
+    contexts: ["selection"]
   });
-  chrome.contextMenus.create({
-    id: "om-assistant-open-sidepanel",
-    parentId: "om-assistant-root",
-    title: "Send to sidepanel…",
-    contexts: ["selection", "editable"]
-  });
-
-  const lib = await getLibrary();
-  if (!lib?.actions?.length) return;
-
-  const byProduct = lib.actions.reduce((acc, a) => {
-    (acc[a.product] = acc[a.product] || []).push(a);
-    return acc;
-  }, {});
-
-  for (const [product, actions] of Object.entries(byProduct)) {
-    const productMenuId = `om-assistant-product-${product}`;
-    chrome.contextMenus.create({
-      id: productMenuId,
-      parentId: "om-assistant-root",
-      title: product,
-      contexts: ["selection", "editable"]
-    });
-    for (const a of actions) {
-      chrome.contextMenus.create({
-        id: `om-assistant-action-${a.id}`,
-        parentId: productMenuId,
-        title: a.label.replace(/^[^→]*→\s*/, ""),
-        contexts: ["selection", "editable"]
-      });
-    }
-  }
-}
+});
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (!tab?.id) return;
+  if (info.menuItemId !== "om-send-to-assistant") return;
+  if (!info.selectionText) return;
 
-  if (info.menuItemId === "om-assistant-open-sidepanel") {
-    await chrome.sidePanel.open({ tabId: tab.id });
-    const { html } = await chrome.tabs.sendMessage(tab.id, { type: "getSelectionHtml" });
-    chrome.runtime.sendMessage({ type: "sidepanelReceiveSelection", html });
-    return;
-  }
-
-  if (typeof info.menuItemId === "string" && info.menuItemId.startsWith("om-assistant-action-")) {
-    const actionId = info.menuItemId.replace("om-assistant-action-", "");
-    const { html: selectionHtml } = await chrome.tabs.sendMessage(tab.id, { type: "getSelectionHtml" });
-    const { conversationId } = await chrome.tabs.sendMessage(tab.id, { type: "getConversationId" });
-    const result = await compose({ actionId, selectionHtml, conversationId });
-    if (result.error) {
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "OM Assistant error",
-        message: result.error
-      });
-      return;
+  await chrome.storage.local.set({
+    incoming_selection: {
+      text: info.selectionText,
+      ts: Date.now(),
+      tabId: tab?.id ?? null,
+      url: tab?.url ?? null
     }
-    await chrome.tabs.sendMessage(tab.id, { type: "insertHtml", html: result.html });
+  });
+
+  try {
+    if (tab?.windowId != null) {
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+    } else if (tab?.id != null) {
+      await chrome.sidePanel.open({ tabId: tab.id });
+    }
+  } catch (e) {
+    // sidePanel.open must be called from a user gesture; context menu click qualifies.
+    console.warn("sidePanel.open failed:", e.message);
   }
 });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "ticketOpened") {
+chrome.action.onClicked.addListener(async (tab) => {
+  if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "ticketOpened" && msg.conversationId) {
     handleTicketRevisit(msg.conversationId).catch(() => {});
-    return;
   }
 });
 
@@ -110,13 +70,11 @@ chrome.notifications.onButtonClicked.addListener(async (notifId, btnIdx) => {
   if (!notifId.startsWith("revisit-")) return;
   const conversationId = notifId.replace("revisit-", "");
   if (btnIdx === 0) {
-    await chrome.tabs.create({ url: chrome.runtime.getURL(`sidepanel.html#log=${conversationId}`) });
+    await chrome.storage.local.set({ log_correction_for: conversationId });
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (active?.windowId != null) await chrome.sidePanel.open({ windowId: active.windowId });
   } else {
     await setDismissal(conversationId, Date.now());
   }
   chrome.notifications.clear(notifId);
-});
-
-chrome.action.onClicked.addListener(async (tab) => {
-  await chrome.sidePanel.open({ tabId: tab.id });
 });

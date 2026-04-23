@@ -1,62 +1,281 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8" />
   <title>OM Support Assistant</title>
   <style>
-    body { font: 13px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 12px; color: #222; }
-    h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.4px; color: #555; }
-    .row { margin-bottom: 10px; }
-    select, textarea, input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
-    textarea { min-height: 60px; resize: vertical; }
-    button { padding: 6px 10px; border-radius: 4px; border: 1px solid #ccc; background: #f5f5f5; cursor: pointer; }
-    button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
-    button.primary:hover { background: #1557b0; }
-    .preview { border: 1px solid #ddd; border-radius: 4px; padding: 10px; min-height: 120px; background: #fafafa; }
-    .preview[contenteditable="true"] { background: #fff; }
-    .meta { font-size: 11px; color: #888; margin-top: 4px; }
-    .error { color: #c00; font-size: 12px; margin-top: 6px; }
-    .btn-row { display: flex; gap: 6px; margin-top: 8px; }
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --border: #e3e5e8;
+      --border-strong: #cbd0d6;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --primary: #1a73e8;
+      --primary-hover: #1557b0;
+      --success: #16a34a;
+      --danger: #b42318;
+      --radius: 8px;
+      --radius-sm: 6px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+    h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+    label { display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 5px; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .field { margin-bottom: 12px; }
+    .field:last-child { margin-bottom: 0; }
+    .row { display: flex; gap: 10px; }
+    .row > .field { flex: 1; margin-bottom: 0; }
+
+    input[type=text], input[type=password], select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border-color 0.1s, box-shadow 0.1s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(26,115,232,0.15);
+    }
+    textarea { resize: vertical; min-height: 68px; }
+    textarea.large { min-height: 90px; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #374151;
+    }
+    .checkbox-row input { width: auto; margin: 0; }
+
+    button {
+      font: inherit;
+      padding: 9px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    button:hover { background: #f3f4f6; }
+    button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    button.primary:disabled { background: #93bbf0; border-color: #93bbf0; cursor: not-allowed; }
+    button.full { width: 100%; }
+    button.ghost { background: transparent; border-color: transparent; color: var(--muted); padding: 4px 0; }
+    button.ghost:hover { background: transparent; color: var(--text); }
+    .btn-row { display: flex; gap: 8px; }
+
+    .settings-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--primary);
+      margin-bottom: 12px;
+    }
+
+    #settingsSection { display: none; background: #f0f4fa; border: 1px solid #d5e1f2; }
+    #settingsSection.open { display: block; }
+
+    .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .status { font-size: 12px; margin-top: 8px; }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--success); }
+
+    #output { margin-top: 4px; }
+    .output-section { margin-bottom: 12px; }
+    .output-section:last-child { margin-bottom: 0; }
+    .output-section h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      margin: 0 0 6px;
+      font-weight: 600;
+    }
+    .output-box {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .output-box.reason { border-left-color: #9ca3af; color: #4b5563; font-size: 12px; }
+    .output-box.version-a { border-left-color: var(--primary); }
+    .output-box.version-b { border-left-color: var(--success); }
+    .output-box p { margin: 0 0 8px; }
+    .output-box p:last-child { margin-bottom: 0; }
+    .output-box ul, .output-box ol { margin: 6px 0; padding-left: 20px; }
+    .output-box li { margin: 3px 0; }
+
+    .output-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+    .output-actions button { padding: 5px 10px; font-size: 12px; }
+
+    .loading { color: var(--muted); font-style: italic; font-size: 13px; }
+
+    .empty { color: var(--muted); font-size: 12px; font-style: italic; }
   </style>
 </head>
 <body>
-  <div class="row">
-    <h3>Selection</h3>
-    <div id="selection-preview" class="preview" contenteditable="false"></div>
-    <div class="meta" id="selection-meta"></div>
-  </div>
 
-  <div class="row">
-    <h3>Action</h3>
-    <select id="action-select"></select>
-  </div>
+  <button type="button" id="toggleSettings" class="settings-toggle">&#9881; Settings</button>
 
-  <div class="row" id="provider-row" style="display:none">
-    <h3>Provider</h3>
-    <select id="provider-select"></select>
-  </div>
-
-  <div class="row">
-    <h3>Notes (optional)</h3>
-    <textarea id="notes" placeholder="Anything specific to steer the draft…"></textarea>
-  </div>
-
-  <div class="btn-row">
-    <button id="generate" class="primary">Generate draft</button>
-    <button id="clear">Clear</button>
-  </div>
-
-  <div class="error" id="error"></div>
-
-  <div class="row" style="margin-top: 14px">
-    <h3>Draft</h3>
-    <div id="draft-preview" class="preview" contenteditable="true"></div>
-    <div class="btn-row">
-      <button id="insert" class="primary">Insert into ticket</button>
-      <button id="copy">Copy</button>
+  <div id="settingsSection" class="card">
+    <div class="field">
+      <label for="geminiKey">Gemini API key</label>
+      <input type="password" id="geminiKey" autocomplete="off" placeholder="AIza..." />
     </div>
-    <div class="meta" id="draft-meta"></div>
+    <div class="field">
+      <label for="claudeKey">Claude API key</label>
+      <input type="password" id="claudeKey" autocomplete="off" placeholder="sk-ant-..." />
+    </div>
+    <div class="field">
+      <label for="openaiKey">OpenAI API key</label>
+      <input type="password" id="openaiKey" autocomplete="off" placeholder="sk-..." />
+    </div>
+    <div class="field">
+      <label for="defaultProvider">Default provider</label>
+      <select id="defaultProvider"></select>
+    </div>
+    <div class="btn-row">
+      <button id="saveSettings" class="primary">Save</button>
+      <button id="exportLibrary">Export templates</button>
+      <button id="importLibrary">Import…</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" />
+    </div>
+    <div class="status" id="settingsStatus"></div>
   </div>
+
+  <h2>OM Support Assistant</h2>
+
+  <div class="card">
+    <div class="field">
+      <label for="templateSelect">Load template (optional)</label>
+      <select id="templateSelect"><option value="">— start from scratch —</option></select>
+    </div>
+
+    <div class="field">
+      <label for="product">Product</label>
+      <select id="product">
+        <option value="OptinMonster">OptinMonster</option>
+        <option value="TrustPulse">TrustPulse</option>
+        <option value="Beacon">Beacon</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="draft">Draft — customer message or your rough notes</label>
+      <textarea id="draft" class="large" placeholder="Paste the customer ticket or your draft here…"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="promptExtra">Prompt — extra context or search keywords</label>
+      <textarea id="promptExtra" placeholder="e.g. &quot;explain how to install pixel&quot; (used for doc search)"></textarea>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="goal">Goal</label>
+        <select id="goal">
+          <option>Stop Churn</option>
+          <option>Explain Technical Issue</option>
+          <option>Upselling</option>
+          <option>Account Issue</option>
+          <option>Just Saying Thanks</option>
+          <option>Reactivate Churned User</option>
+          <option>Request A Review / Feedback</option>
+          <option>Close Sale</option>
+          <option>Generic Information</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="mode">Mode</label>
+        <select id="mode">
+          <option value="technical">Technical</option>
+          <option value="billing">Billing</option>
+          <option value="lifecycle">Lifecycle</option>
+          <option value="operational">Operational</option>
+          <option value="tone-only">Tone only</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="audience">Audience</label>
+        <select id="audience">
+          <option>Frustrated Customer</option>
+          <option>Brand New User</option>
+          <option>Pre-Sale Inquiry</option>
+          <option>VIP Client</option>
+          <option>Churned Customer</option>
+          <option>Happy Customer</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="tone">Tone</label>
+        <select id="tone">
+          <option>Casual / Conversational</option>
+          <option>Strictly Professional</option>
+          <option>Apologetic</option>
+          <option>Direct</option>
+          <option>Calm</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field" id="providerRow" style="display:none">
+      <label for="providerSelect">Provider (this draft)</label>
+      <select id="providerSelect"></select>
+    </div>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="useSearch" />
+      <label for="useSearch" style="margin:0">Search official docs (uses Prompt keywords)</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="concise" />
+      <label for="concise" style="margin:0">Keep it concise</label>
+    </div>
+  </div>
+
+  <button id="generateBtn" class="primary full">Generate reply</button>
+  <div style="height: 8px"></div>
+  <div class="btn-row">
+    <button id="clearBtn">Clear</button>
+    <button id="saveTemplateBtn">Save as template</button>
+  </div>
+
+  <div class="status" id="formStatus"></div>
+
+  <div id="output" style="margin-top: 16px"></div>
 
   <script type="module" src="sidepanel.js"></script>
 </body>

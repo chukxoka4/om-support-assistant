@@ -1,86 +1,49 @@
 {
-  "version": 1,
-  "house_style_ref": "house-style.md",
-  "actions": [
+  "version": 2,
+  "templates": [
     {
-      "id": "om-billing-refund-request",
-      "label": "OptinMonster → Billing → Refund request",
-      "product": "optinmonster",
-      "category": "billing",
-      "system": "You are a WPSA OptinMonster support specialist. {{house_style}}\n\nProduct context:\n{{product_doc:optinmonster}}",
-      "rules": [
-        "Confirm the plan and charge date before quoting any refund amount.",
-        "Never promise pro-rata refunds without manager approval.",
-        "Acknowledge the customer's reason for the request before proposing next steps."
-      ],
-      "examples": [],
-      "user_template": "Customer ticket (HTML):\n{{selection_html}}\n\nAdditional notes from agent:\n{{notes}}",
-      "output_format": "html",
-      "preferred_provider": null
+      "id": "om-technical-frustrated-direct",
+      "label": "OM · Technical · Frustrated · Direct",
+      "product": "OptinMonster",
+      "goal": "Explain Technical Issue",
+      "mode": "technical",
+      "audience": "Frustrated Customer",
+      "tone": "Direct",
+      "concise": true,
+      "extra_prompt": ""
     },
     {
-      "id": "om-technical-campaign-not-displaying",
-      "label": "OptinMonster → Technical → Campaign not displaying",
-      "product": "optinmonster",
-      "category": "technical",
-      "system": "You are a WPSA OptinMonster support specialist. {{house_style}}\n\nProduct context:\n{{product_doc:optinmonster}}",
-      "rules": [
-        "Ask for the campaign slug and the site URL before troubleshooting.",
-        "Walk through the standard display checklist: campaign published, targeting rules, output settings, caching.",
-        "Link to official docs rather than paraphrasing them."
-      ],
-      "examples": [],
-      "user_template": "Customer ticket (HTML):\n{{selection_html}}\n\nAdditional notes:\n{{notes}}",
-      "output_format": "html",
-      "preferred_provider": null
+      "id": "om-billing-refund-apologetic",
+      "label": "OM · Billing · Refund · Apologetic",
+      "product": "OptinMonster",
+      "goal": "Account Issue",
+      "mode": "billing",
+      "audience": "Frustrated Customer",
+      "tone": "Apologetic",
+      "concise": false,
+      "extra_prompt": "Confirm the plan and charge date before quoting any refund amount."
     },
     {
-      "id": "om-lifecycle-renewal-discount",
-      "label": "OptinMonster → Lifecycle → Renewal discount offer",
-      "product": "optinmonster",
-      "category": "lifecycle",
-      "system": "You are a WPSA OptinMonster support specialist. {{house_style}}\n\nProduct context:\n{{product_doc:optinmonster}}",
-      "rules": [
-        "Lead with value: what the customer has achieved on their current plan.",
-        "Offer the standard renewal discount before escalating.",
-        "Close with a clear next step (accept / reply / schedule call)."
-      ],
-      "examples": [],
-      "user_template": "Customer ticket (HTML):\n{{selection_html}}\n\nAdditional notes:\n{{notes}}",
-      "output_format": "html",
-      "preferred_provider": null
+      "id": "om-lifecycle-renewal-calm",
+      "label": "OM · Lifecycle · Renewal · Calm",
+      "product": "OptinMonster",
+      "goal": "Stop Churn",
+      "mode": "lifecycle",
+      "audience": "Churned Customer",
+      "tone": "Calm",
+      "concise": false,
+      "extra_prompt": "Lead with value the customer has already gotten on the current plan."
     },
     {
-      "id": "trustpulse-technical-campaign-not-firing",
-      "label": "TrustPulse → Technical → Campaign not firing",
-      "product": "trustpulse",
-      "category": "technical",
-      "system": "You are a WPSA TrustPulse support specialist. {{house_style}}\n\nProduct context:\n{{product_doc:trustpulse}}",
-      "rules": [
-        "Confirm campaign status and site verification first.",
-        "Check analytics source (tracked events vs Zapier feed).",
-        "Link to docs instead of paraphrasing."
-      ],
-      "examples": [],
-      "user_template": "Customer ticket (HTML):\n{{selection_html}}\n\nAdditional notes:\n{{notes}}",
-      "output_format": "html",
-      "preferred_provider": null
-    },
-    {
-      "id": "beacon-holding-reply-investigating",
-      "label": "Beacon → Holding reply → Investigating",
-      "product": "beacon",
-      "category": "operational",
-      "system": "You are a WPSA Beacon support specialist. {{house_style}}\n\nProduct context:\n{{product_doc:beacon}}",
-      "rules": [
-        "Acknowledge the issue specifically — no generic 'thanks for reaching out'.",
-        "State what you're checking and set an expectation for the next update.",
-        "Never commit to a fix timeline without engineering confirmation."
-      ],
-      "examples": [],
-      "user_template": "Customer ticket (HTML):\n{{selection_html}}\n\nAdditional notes:\n{{notes}}",
-      "output_format": "html",
-      "preferred_provider": null
+      "id": "beacon-holding-reply-calm",
+      "label": "Beacon · Operational · Holding reply · Calm",
+      "product": "Beacon",
+      "goal": "Generic Information",
+      "mode": "operational",
+      "audience": "Frustrated Customer",
+      "tone": "Calm",
+      "concise": true,
+      "extra_prompt": "Acknowledge the issue specifically. State what's being checked. Set a next-update expectation. Do not commit to a timeline."
     }
   ]
 }
