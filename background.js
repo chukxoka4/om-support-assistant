@@ -1,8 +1,13 @@
 // Service worker: context menus, quick transforms, revisit notifications.
 // Sidepanel communicates via chrome.storage, not tabs.sendMessage.
 
-import { getDraftsByConversation, getDismissal, setDismissal } from "./lib/storage.js";
+import { getDraftsByConversation, getDismissal, setDismissal, logQuickTransform } from "./lib/storage.js";
 import { retone, translate, RETONE_ACTIONS, LANGUAGES } from "./lib/quick-transform.js";
+
+function conversationIdFromUrl(url) {
+  const m = (url || "").match(/^https:\/\/om\.wpsiteassist\.com\/conversation\/(\d+)/);
+  return m ? m[1] : null;
+}
 
 const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -103,6 +108,18 @@ async function handleQuickTransform(tab, kind, arg) {
       await showStatus(tab.id, `Error: ${result.error}`);
       return;
     }
+
+    await logQuickTransform({
+      id: crypto.randomUUID(),
+      ts: new Date().toISOString(),
+      action_type: kind === "retone" ? "quick-retone" : "quick-translate",
+      action_id: arg,
+      conversation_id: conversationIdFromUrl(tab.url),
+      provider: result.provider,
+      input_html: selectedHtml,
+      output_html: result.text,
+      outcome: null
+    });
 
     const label = kind === "retone" ? RETONE_ACTIONS[arg]?.label : `Translated to ${arg}`;
     await chrome.scripting.executeScript({

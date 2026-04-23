@@ -8,8 +8,10 @@ import {
   getAvailableProviders,
   getLibraryOverride,
   setLibraryOverride,
-  updateDraft
+  updateDraft,
+  getAllDrafts
 } from "./lib/storage.js";
+import { computeMetrics } from "./lib/metrics.js";
 
 const el = (id) => document.getElementById(id);
 const state = { lastDraftId: null, lastParsed: null };
@@ -332,6 +334,7 @@ async function copyVersion(key) {
     await navigator.clipboard.writeText(text);
     setStatus(el("formStatus"), "Copied as plain text.", "ok");
   }
+  showOutcomeChip(key, "copy");
 }
 
 async function insertVersion(key) {
@@ -347,10 +350,7 @@ async function insertVersion(key) {
     });
     if (result?.result?.ok) {
       setStatus(el("formStatus"), "Inserted into editor.", "ok");
-      if (state.lastDraftId) {
-        const outcome = window.prompt("Outcome? (sent / edited / rewrote)", "sent");
-        if (outcome) await updateDraft(state.lastDraftId, { outcome });
-      }
+      showOutcomeChip(key, "insert");
     } else {
       setStatus(el("formStatus"), "No editor / selection focused. Copied instead.", "error");
       await copyVersion(key);
@@ -406,6 +406,131 @@ function insertHtmlInActiveEditor(html) {
 
   return { ok: false };
 }
+
+// ---------- outcome chip ----------
+function showOutcomeChip(versionKey, action) {
+  if (!state.lastDraftId) return;
+  const section = el("output").querySelector(`.output-box.${versionKey}`)?.parentElement;
+  if (!section) return;
+  const existing = section.querySelector(".outcome-chip");
+  if (existing) existing.remove();
+
+  const chip = document.createElement("div");
+  chip.className = "outcome-chip";
+  chip.innerHTML = `
+    <span class="label">${action === "copy" ? "Copied" : "Inserted"} — outcome?</span>
+    <button class="sent" data-outcome="sent">Sent as-is</button>
+    <button class="edited" data-outcome="edited">Edited</button>
+    <button class="rewrote" data-outcome="rewrote">Rewrote</button>
+    <button class="skip" data-outcome="skip">skip</button>
+  `;
+  section.appendChild(chip);
+
+  const draftId = state.lastDraftId;
+  const timer = setTimeout(() => chip.remove(), 15000);
+
+  chip.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      clearTimeout(timer);
+      const outcome = btn.dataset.outcome;
+      if (outcome !== "skip") {
+        await updateDraft(draftId, {
+          outcome,
+          chosen_version: versionKey,
+          delivery_action: action,
+          delivered_at: new Date().toISOString()
+        });
+        setStatus(el("formStatus"), `Logged: ${outcome}.`, "ok");
+        if (el("historyPanel").classList.contains("open")) renderHistory();
+      }
+      chip.remove();
+    });
+  });
+}
+
+// ---------- history panel ----------
+el("historyToggle").addEventListener("click", async () => {
+  const panel = el("historyPanel");
+  panel.classList.toggle("open");
+  if (panel.classList.contains("open")) await renderHistory();
+});
+
+el("exportHistory").addEventListener("click", async () => {
+  const drafts = await getAllDrafts();
+  const blob = new Blob([JSON.stringify(drafts, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `om-assistant-history-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+el("clearHistory").addEventListener("click", async () => {
+  if (!confirm("Clear all draft history? This cannot be undone.")) return;
+  await chrome.storage.local.set({ draft_log: [] });
+  await renderHistory();
+});
+
+async function renderHistory() {
+  const metrics = await computeMetrics(30);
+  const grid = el("metricsGrid");
+  const rateCls = metrics.readyRate == null ? "" : metrics.readyRate >= 70 ? "good" : "warn";
+  grid.innerHTML = `
+    <div class="metric">
+      <div class="num ${rateCls}">${metrics.readyRate == null ? "—" : metrics.readyRate + "%"}</div>
+      <div class="lbl">Ready-to-send</div>
+    </div>
+    <div class="metric">
+      <div class="num">${metrics.totalDrafts}</div>
+      <div class="lbl">Drafts (30d)</div>
+    </div>
+    <div class="metric">
+      <div class="num">${metrics.quickTransforms}</div>
+      <div class="lbl">Quick transforms</div>
+    </div>
+  `;
+
+  const drafts = (await getAllDrafts()).slice().reverse();
+  const list = el("historyList");
+  if (!drafts.length) {
+    list.innerHTML = '<div class="empty">No history yet. Generate a reply or run a quick transform.</div>';
+    return;
+  }
+
+  list.innerHTML = drafts.slice(0, 50).map(renderHistoryItem).join("");
+  el("historyToggleLabel").textContent = `History & learning (${drafts.length})`;
+}
+
+function renderHistoryItem(d) {
+  const when = new Date(d.ts).toLocaleString();
+  const isQuick = d.action_type === "quick-retone" || d.action_type === "quick-translate";
+  const badge = isQuick
+    ? `<span class="badge quick">${d.action_type === "quick-translate" ? "translate" : "retone"}</span>`
+    : d.outcome
+    ? `<span class="badge ${d.outcome}">${d.outcome}</span>`
+    : `<span class="badge none">no outcome</span>`;
+  const title = isQuick
+    ? `${d.action_type === "quick-translate" ? "Translate → " + d.action_id : "Retone: " + d.action_id}`
+    : `${d.product || "?"} · ${d.mode || "?"} · ${d.tone || "?"}`;
+  const convo = d.conversation_id ? `#${d.conversation_id}` : "no ticket";
+  const snippet = escapeHtml(
+    (isQuick ? stripTags(d.output_html || "") : d.output_parsed?.versionA || d.draft_input || "").slice(0, 220)
+  );
+  return `
+    <div class="history-item">
+      <div class="hi-head">
+        <strong>${escapeHtml(title)}</strong>
+        ${badge}
+      </div>
+      <div class="hi-meta">${when} · ${convo} · ${d.provider || "?"}</div>
+      <div class="hi-snippet">${snippet}</div>
+    </div>
+  `;
+}
+
+function stripTags(html) { return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
+function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 async function getCurrentConversationId() {
   try {

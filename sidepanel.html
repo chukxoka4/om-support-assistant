@@ -141,6 +141,66 @@
     .loading { color: var(--muted); font-style: italic; font-size: 13px; }
 
     .empty { color: var(--muted); font-size: 12px; font-style: italic; }
+
+    .outcome-chip {
+      display: flex; align-items: center; gap: 6px;
+      margin-top: 6px; padding: 6px 8px;
+      background: #fffbea; border: 1px solid #fde68a; border-radius: 6px;
+      font-size: 12px;
+    }
+    .outcome-chip .label { color: #78350f; font-weight: 500; margin-right: 4px; }
+    .outcome-chip button {
+      padding: 3px 8px; font-size: 11px; border-radius: 4px;
+    }
+    .outcome-chip button.sent { background: #dcfce7; border-color: #86efac; color: #166534; }
+    .outcome-chip button.edited { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+    .outcome-chip button.rewrote { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+    .outcome-chip .skip { margin-left: auto; background: transparent; border: none; color: var(--muted); }
+
+    .history-toggle {
+      display: flex; justify-content: space-between; align-items: center;
+      width: 100%; padding: 10px 14px; margin-top: 16px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 13px;
+    }
+    .history-toggle:hover { background: #f3f4f6; }
+    #historyPanel { display: none; margin-top: 8px; }
+    #historyPanel.open { display: block; }
+
+    .metrics-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+      margin-bottom: 12px;
+    }
+    .metric {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 10px; text-align: center;
+    }
+    .metric .num { font-size: 18px; font-weight: 600; color: var(--text); }
+    .metric .num.good { color: var(--success); }
+    .metric .num.warn { color: #d97706; }
+    .metric .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+
+    .history-item {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; font-size: 12px;
+    }
+    .history-item .hi-head {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;
+    }
+    .history-item .hi-meta { color: var(--muted); font-size: 11px; }
+    .history-item .hi-snippet {
+      color: #4b5563; font-size: 12px; line-height: 1.4;
+      max-height: 60px; overflow: hidden; margin-top: 4px;
+    }
+    .badge {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .badge.sent { background: #dcfce7; color: #166534; }
+    .badge.edited { background: #fef3c7; color: #92400e; }
+    .badge.rewrote { background: #fee2e2; color: #991b1b; }
+    .badge.none { background: #f3f4f6; color: #6b7280; }
+    .badge.quick { background: #e0e7ff; color: #3730a3; }
   </style>
 </head>
 <body>
@@ -276,6 +336,19 @@
   <div class="status" id="formStatus"></div>
 
   <div id="output" style="margin-top: 16px"></div>
+
+  <button type="button" class="history-toggle" id="historyToggle">
+    <span id="historyToggleLabel">History &amp; learning</span>
+    <span>&#9662;</span>
+  </button>
+  <div id="historyPanel">
+    <div class="metrics-grid" id="metricsGrid"></div>
+    <div class="btn-row" style="margin-bottom: 10px">
+      <button id="exportHistory">Export history (JSON)</button>
+      <button id="clearHistory">Clear history</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
 
   <script type="module" src="sidepanel.js"></script>
 </body>
