@@ -1,22 +1,66 @@
-// Service worker: context menu for "Send to OM Assistant", URL revisit notifications.
-// Communication with sidepanel is via chrome.storage (not tabs.sendMessage).
+// Service worker: context menus, quick transforms, revisit notifications.
+// Sidepanel communicates via chrome.storage, not tabs.sendMessage.
 
 import { getDraftsByConversation, getDismissal, setDismissal } from "./lib/storage.js";
+import { retone, translate, RETONE_ACTIONS, LANGUAGES } from "./lib/quick-transform.js";
 
 const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "om-send-to-assistant",
-    title: "Send to OM Assistant",
-    contexts: ["selection"]
-  });
+  chrome.contextMenus.removeAll(() => buildMenus());
 });
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== "om-send-to-assistant") return;
-  if (!info.selectionText) return;
+function buildMenus() {
+  chrome.contextMenus.create({
+    id: "om-send-to-assistant",
+    title: "Send to OM Assistant (compose)",
+    contexts: ["selection"]
+  });
 
+  chrome.contextMenus.create({
+    id: "om-improve-parent",
+    title: "OM Assistant: Improve text",
+    contexts: ["selection"]
+  });
+  for (const [id, { label }] of Object.entries(RETONE_ACTIONS)) {
+    chrome.contextMenus.create({
+      id: `om-improve-${id}`,
+      parentId: "om-improve-parent",
+      title: label,
+      contexts: ["selection"]
+    });
+  }
+
+  chrome.contextMenus.create({
+    id: "om-translate-parent",
+    title: "OM Assistant: Translate to",
+    contexts: ["selection"]
+  });
+  for (const lang of LANGUAGES) {
+    chrome.contextMenus.create({
+      id: `om-translate-${lang.id}`,
+      parentId: "om-translate-parent",
+      title: lang.name,
+      contexts: ["selection"]
+    });
+  }
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const id = info.menuItemId;
+  if (id === "om-send-to-assistant") return handleSendToAssistant(info, tab);
+  if (typeof id === "string" && id.startsWith("om-improve-")) {
+    return handleQuickTransform(tab, "retone", id.replace("om-improve-", ""));
+  }
+  if (typeof id === "string" && id.startsWith("om-translate-")) {
+    const langId = id.replace("om-translate-", "");
+    const lang = LANGUAGES.find((l) => l.id === langId);
+    if (lang) return handleQuickTransform(tab, "translate", lang.name);
+  }
+});
+
+async function handleSendToAssistant(info, tab) {
+  if (!info.selectionText) return;
   await chrome.storage.local.set({
     incoming_selection: {
       text: info.selectionText,
@@ -25,18 +69,62 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       url: tab?.url ?? null
     }
   });
-
   try {
-    if (tab?.windowId != null) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-    } else if (tab?.id != null) {
-      await chrome.sidePanel.open({ tabId: tab.id });
-    }
+    if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+    else if (tab?.id != null) await chrome.sidePanel.open({ tabId: tab.id });
   } catch (e) {
-    // sidePanel.open must be called from a user gesture; context menu click qualifies.
     console.warn("sidePanel.open failed:", e.message);
   }
-});
+}
+
+async function handleQuickTransform(tab, kind, arg) {
+  if (!tab?.id) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      files: ["content-overlay.js"]
+    });
+
+    const [{ result: selectedHtml } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      func: () => (window.__omGetSelectionHtml ? window.__omGetSelectionHtml() : "")
+    });
+
+    if (!selectedHtml) {
+      await showStatus(tab.id, "No selection found.");
+      return;
+    }
+
+    await showStatus(tab.id, kind === "retone" ? `Working on: ${RETONE_ACTIONS[arg]?.label || arg}` : `Translating to ${arg}…`);
+
+    const result = kind === "retone" ? await retone(arg, selectedHtml) : await translate(arg, selectedHtml);
+
+    if (result.error) {
+      await showStatus(tab.id, `Error: ${result.error}`);
+      return;
+    }
+
+    const label = kind === "retone" ? RETONE_ACTIONS[arg]?.label : `Translated to ${arg}`;
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      func: (html, lbl) => window.__omShowSuggestion && window.__omShowSuggestion(html, lbl),
+      args: [result.text, label]
+    });
+  } catch (e) {
+    console.error("Quick transform failed:", e);
+    try { await showStatus(tab.id, `Failed: ${e.message}`); } catch {}
+  }
+}
+
+async function showStatus(tabId, msg) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      func: (m) => window.__omShowStatus && window.__omShowStatus(m),
+      args: [msg]
+    });
+  } catch {}
+}
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
