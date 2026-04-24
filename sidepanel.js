@@ -3,7 +3,9 @@ import {
   getApiKeys, setApiKeys,
   getDefaultProvider, setDefaultProvider, getAvailableProviders,
   getTaxonomy, addTaxonomyValue,
-  getAllDrafts, updateDraft
+  getAllDrafts, updateDraft,
+  getUnresolvedDeliveredByConversation,
+  getDismissal, setDismissal
 } from "./lib/storage.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
@@ -12,7 +14,41 @@ import {
 import { proposeSuggestion } from "./lib/suggestions.js";
 
 const el = (id) => document.getElementById(id);
-const state = { lastDraftId: null, lastParsed: null, lastLibraryEntryId: null };
+const state = {
+  lastDraftId: null,
+  lastParsed: null,
+  lastLibraryEntryId: null,
+  lastFocusedField: "draft",      // "draft" | "prompt"
+  rewriteOf: null                  // draft id being rewritten
+};
+
+const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Track which of the two input fields was focused last, for routing
+// "Send to Draft/Prompt" context-menu actions when focus has drifted.
+for (const id of ["draft", "promptExtra"]) {
+  document.addEventListener("DOMContentLoaded", () => {
+    const node = el(id);
+    if (!node) return;
+    node.addEventListener("focus", () => {
+      state.lastFocusedField = id === "draft" ? "draft" : "prompt";
+    });
+  });
+}
+
+function spliceAtCursor(textarea, text) {
+  if (!textarea) return;
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  const needsLeadingSpace = before && !/\s$/.test(before) ? " " : "";
+  const insertion = needsLeadingSpace + text;
+  textarea.value = before + insertion + after;
+  const newPos = start + insertion.length;
+  textarea.focus();
+  textarea.setSelectionRange(newPos, newPos);
+}
 
 // ---------- form helpers ----------
 function getFormValues() {
@@ -160,7 +196,15 @@ el("libraryPick").addEventListener("change", async (e) => {
   meta.textContent = entry.scenario_summary;
 });
 
-// ---------- incoming selection ----------
+// ---------- incoming selection (cursor-aware append) ----------
+function applyIncomingSelection(sel) {
+  if (!sel?.text) return;
+  const target = sel.target === "prompt" ? "prompt" : (sel.target === "draft" ? "draft" : state.lastFocusedField);
+  const node = target === "prompt" ? el("promptExtra") : el("draft");
+  spliceAtCursor(node, sel.text);
+  state.lastFocusedField = target;
+}
+
 async function consumeIncomingSelection() {
   const { incoming_selection } = await chrome.storage.local.get("incoming_selection");
   if (!incoming_selection) return;
@@ -168,14 +212,18 @@ async function consumeIncomingSelection() {
     await chrome.storage.local.remove("incoming_selection");
     return;
   }
-  el("draft").value = incoming_selection.text;
+  applyIncomingSelection(incoming_selection);
   await chrome.storage.local.remove("incoming_selection");
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.incoming_selection?.newValue) {
-    el("draft").value = changes.incoming_selection.newValue.text;
+  if (area !== "local") return;
+  if (changes.incoming_selection?.newValue) {
+    applyIncomingSelection(changes.incoming_selection.newValue);
     chrome.storage.local.remove("incoming_selection");
+  }
+  if (changes.last_ticket_opened?.newValue) {
+    renderRevisitCard().catch(() => {});
   }
 });
 
@@ -196,8 +244,8 @@ el("generateBtn").addEventListener("click", async () => {
   el("output").innerHTML = '<div class="loading">Thinking…</div>';
   setStatus(el("formStatus"), "");
   try {
-    const conversationId = await getCurrentConversationId();
-    const result = await compose({ ...v, conversationId });
+    const { conversationId, ticketUrl } = await getCurrentTicket();
+    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf });
     if (result.error) {
       el("output").innerHTML = "";
       setStatus(el("formStatus"), result.error, "error");
@@ -206,6 +254,7 @@ el("generateBtn").addEventListener("click", async () => {
     state.lastDraftId = result.draftId;
     state.lastParsed = result.parsed;
     state.lastLibraryEntryId = result.libraryEntryId;
+    state.rewriteOf = null;
     renderOutput(result.parsed, result.provider);
     await renderLibraryPicker();
   } finally {
@@ -548,13 +597,87 @@ async function renderRecentDrafts() {
 function stripTags(html) { return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
 function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
-async function getCurrentConversationId() {
+async function getCurrentTicket() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.url) return null;
+    if (!tab?.url) return { conversationId: null, ticketUrl: null };
     const m = tab.url.match(/^https:\/\/om\.wpsiteassist\.com\/conversation\/(\d+)/);
-    return m ? m[1] : null;
-  } catch { return null; }
+    return { conversationId: m ? m[1] : null, ticketUrl: tab.url };
+  } catch { return { conversationId: null, ticketUrl: null }; }
+}
+
+// ---------- revisit card ----------
+async function renderRevisitCard() {
+  const card = el("revisitCard");
+  const { conversationId } = await getCurrentTicket();
+  if (!conversationId) { card.style.display = "none"; card.innerHTML = ""; return; }
+
+  const dismissed = await getDismissal(conversationId);
+  if (dismissed && Date.now() - dismissed < REVISIT_COOLDOWN_MS) {
+    card.style.display = "none"; card.innerHTML = ""; return;
+  }
+
+  const unresolved = await getUnresolvedDeliveredByConversation(conversationId);
+  if (!unresolved.length) { card.style.display = "none"; card.innerHTML = ""; return; }
+
+  const latest = unresolved[unresolved.length - 1];
+  const versionKey = latest.chosen_version || "version-a";
+  const snippet = latest.output_parsed?.[versionKey === "version-b" ? "versionB" : "versionA"] || latest.draft_input || "";
+  const when = new Date(latest.delivered_at || latest.ts).toLocaleString();
+
+  card.innerHTML = `
+    <div class="revisit">
+      <div class="r-head">Ticket #${conversationId} — you drafted this before</div>
+      <div class="r-sub">${unresolved.length} unresolved · last ${latest.delivery_action || "drafted"} ${when}</div>
+      <div class="r-draft">${escapeHtml(snippet.slice(0, 400))}${snippet.length > 400 ? "…" : ""}</div>
+      <div class="r-actions">
+        <button class="primary" data-revisit="sent">Sent as-is</button>
+        <button class="primary" data-revisit="manager_approved">Manager approved</button>
+        <button data-revisit="rewrite">Rewrite</button>
+        <button class="ghost" data-revisit="dismiss">Dismiss</button>
+      </div>
+    </div>
+  `;
+  card.style.display = "";
+
+  card.querySelectorAll("button[data-revisit]").forEach((btn) => {
+    btn.addEventListener("click", () => handleRevisit(btn.dataset.revisit, latest, conversationId));
+  });
+}
+
+async function handleRevisit(action, draft, conversationId) {
+  if (action === "dismiss") {
+    await setDismissal(conversationId, Date.now());
+    await renderRevisitCard();
+    return;
+  }
+  if (action === "sent" || action === "manager_approved") {
+    await updateDraft(draft.id, { outcome: action });
+    if (draft.library_entry_id) {
+      await bumpScore(draft.library_entry_id, action === "sent" ? "sent_as_is" : "manager_approved", 1);
+    }
+    setStatus(el("formStatus"), `Logged: ${action.replace("_", " ")}.`, "ok");
+    await renderRevisitCard();
+    return;
+  }
+  if (action === "rewrite") {
+    await hydrateFromDraft(draft);
+  }
+}
+
+async function hydrateFromDraft(draft) {
+  state.rewriteOf = draft.id;
+  if (draft.product) el("product").value = draft.product;
+  setDropdowns({
+    goal: draft.goal, audience: draft.audience, tone: draft.tone, mode: draft.mode, concise: draft.concise
+  });
+  if (draft.library_entry_id) el("libraryPick").value = draft.library_entry_id;
+  el("promptExtra").value = draft.prompt_extra || "";
+  // Show prior draft text at top of Draft field as reference context
+  const prior = draft.output_parsed?.versionA || draft.output_parsed?.versionB || "";
+  if (prior) el("draft").value = `(prior draft — adjust below)\n${prior}\n\n---\n`;
+  el("promptExtra").focus();
+  setStatus(el("formStatus"), "Rewrite mode: edit prompt, then Generate.", "ok");
 }
 
 // ---------- init ----------
@@ -563,4 +686,7 @@ async function getCurrentConversationId() {
   await renderDropdowns();
   await renderLibraryPicker();
   await consumeIncomingSelection();
+  await renderRevisitCard();
+  chrome.tabs.onActivated?.addListener?.(() => renderRevisitCard().catch(() => {}));
+  chrome.tabs.onUpdated?.addListener?.((_, info) => { if (info.url) renderRevisitCard().catch(() => {}); });
 })();

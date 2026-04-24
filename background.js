@@ -1,7 +1,7 @@
 // Service worker: context menus, quick transforms, revisit notifications.
 // Sidepanel communicates via chrome.storage, not tabs.sendMessage.
 
-import { getDraftsByConversation, getDismissal, setDismissal, logQuickTransform } from "./lib/storage.js";
+import { logQuickTransform } from "./lib/storage.js";
 import { retone, translate, RETONE_ACTIONS, LANGUAGES } from "./lib/quick-transform.js";
 import { seedIfEmpty } from "./lib/library.js";
 
@@ -10,8 +10,6 @@ function conversationIdFromUrl(url) {
   return m ? m[1] : null;
 }
 
-const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-
 chrome.runtime.onInstalled.addListener(async () => {
   chrome.contextMenus.removeAll(() => buildMenus());
   try { await seedIfEmpty(); } catch (e) { console.warn("Library seed failed:", e); }
@@ -19,8 +17,13 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 function buildMenus() {
   chrome.contextMenus.create({
-    id: "om-send-to-assistant",
-    title: "Send to OM Assistant (compose)",
+    id: "om-send-to-draft",
+    title: "Send to OM Assistant → Draft (append at cursor)",
+    contexts: ["selection"]
+  });
+  chrome.contextMenus.create({
+    id: "om-send-to-prompt",
+    title: "Send to OM Assistant → Prompt (append at cursor)",
     contexts: ["selection"]
   });
 
@@ -55,7 +58,8 @@ function buildMenus() {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const id = info.menuItemId;
-  if (id === "om-send-to-assistant") return handleSendToAssistant(info, tab);
+  if (id === "om-send-to-draft") return handleSendToAssistant(info, tab, "draft");
+  if (id === "om-send-to-prompt") return handleSendToAssistant(info, tab, "prompt");
   if (typeof id === "string" && id.startsWith("om-improve-")) {
     return handleQuickTransform(tab, "retone", id.replace("om-improve-", ""));
   }
@@ -66,11 +70,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-async function handleSendToAssistant(info, tab) {
+async function handleSendToAssistant(info, tab, target = "draft") {
   if (!info.selectionText) return;
   await chrome.storage.local.set({
     incoming_selection: {
       text: info.selectionText,
+      target,
       ts: Date.now(),
       tabId: tab?.id ?? null,
       url: tab?.url ?? null
@@ -149,39 +154,11 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
+// Revisit detection is handled inside the sidepanel when it reads the active
+// tab URL. Background no longer fires OS notifications for revisits — they
+// were easy to miss and didn't show the prior draft inline.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "ticketOpened" && msg.conversationId) {
-    handleTicketRevisit(msg.conversationId).catch(() => {});
+    chrome.storage.local.set({ last_ticket_opened: { id: msg.conversationId, ts: Date.now() } });
   }
-});
-
-async function handleTicketRevisit(conversationId) {
-  const drafts = await getDraftsByConversation(conversationId);
-  const unresolved = drafts.filter((d) => !d.correction_logged);
-  if (!unresolved.length) return;
-
-  const dismissed = await getDismissal(conversationId);
-  if (dismissed && Date.now() - dismissed < REVISIT_COOLDOWN_MS) return;
-
-  const notifId = `revisit-${conversationId}`;
-  chrome.notifications.create(notifId, {
-    type: "basic",
-    iconUrl: "icons/icon128.png",
-    title: `Ticket #${conversationId} — drafted before`,
-    message: `Log the final version for learning? ${unresolved.length} unresolved draft(s).`,
-    buttons: [{ title: "Log now" }, { title: "Dismiss" }]
-  });
-}
-
-chrome.notifications.onButtonClicked.addListener(async (notifId, btnIdx) => {
-  if (!notifId.startsWith("revisit-")) return;
-  const conversationId = notifId.replace("revisit-", "");
-  if (btnIdx === 0) {
-    await chrome.storage.local.set({ log_correction_for: conversationId });
-    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (active?.windowId != null) await chrome.sidePanel.open({ windowId: active.windowId });
-  } else {
-    await setDismissal(conversationId, Date.now());
-  }
-  chrome.notifications.clear(notifId);
 });
