@@ -3,6 +3,7 @@
 
 import { getDraftsByConversation, getDismissal, setDismissal, logQuickTransform } from "./lib/storage.js";
 import { retone, translate, RETONE_ACTIONS, LANGUAGES } from "./lib/quick-transform.js";
+import { seedIfEmpty } from "./lib/library.js";
 
 function conversationIdFromUrl(url) {
   const m = (url || "").match(/^https:\/\/om\.wpsiteassist\.com\/conversation\/(\d+)/);
@@ -11,8 +12,9 @@ function conversationIdFromUrl(url) {
 
 const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   chrome.contextMenus.removeAll(() => buildMenus());
+  try { await seedIfEmpty(); } catch (e) { console.warn("Library seed failed:", e); }
 });
 
 function buildMenus() {

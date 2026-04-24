@@ -201,6 +201,46 @@
     .badge.rewrote { background: #fee2e2; color: #991b1b; }
     .badge.none { background: #f3f4f6; color: #6b7280; }
     .badge.quick { background: #e0e7ff; color: #3730a3; }
+    .badge.seed { background: #eef2ff; color: #4338ca; }
+    .badge.generated { background: #ecfccb; color: #3f6212; }
+
+    .library-item {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; font-size: 12px;
+    }
+    .library-item .li-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+    .library-item .li-title { font-weight: 600; font-size: 13px; color: var(--text); }
+    .library-item .li-summary { color: #4b5563; margin: 4px 0; }
+    .library-item .li-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+    .chip {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: 10px; background: #f3f4f6; color: #4b5563;
+    }
+    .library-item .li-score { font-weight: 600; color: var(--success); font-size: 12px; }
+    .library-item .li-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .library-item .li-actions button { padding: 5px 10px; font-size: 11px; }
+
+    .suggestion {
+      background: #fffbea; border: 1px solid #fde68a;
+      border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; font-size: 12px;
+    }
+    .suggestion .s-head { font-weight: 600; margin-bottom: 4px; color: #78350f; }
+    .suggestion .s-change { margin: 4px 0; color: #422006; }
+    .suggestion .s-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+    .correction-box { margin-top: 8px; }
+    .correction-box textarea {
+      width: 100%; min-height: 80px; font-size: 12px;
+      padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+      font-family: inherit;
+    }
+    .correction-box .cb-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+    .add-value-link {
+      display: inline-block; font-size: 11px; color: var(--primary);
+      cursor: pointer; margin-top: 3px;
+    }
+    .add-value-link:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -237,8 +277,9 @@
 
   <div class="card">
     <div class="field">
-      <label for="templateSelect">Load template (optional)</label>
-      <select id="templateSelect"><option value="">— start from scratch —</option></select>
+      <label for="libraryPick">Library prompt (optional)</label>
+      <select id="libraryPick"><option value="">— no preset —</option></select>
+      <div id="libraryPickMeta" class="meta"></div>
     </div>
 
     <div class="field">
@@ -263,51 +304,26 @@
     <div class="row">
       <div class="field">
         <label for="goal">Goal</label>
-        <select id="goal">
-          <option>Stop Churn</option>
-          <option>Explain Technical Issue</option>
-          <option>Upselling</option>
-          <option>Account Issue</option>
-          <option>Just Saying Thanks</option>
-          <option>Reactivate Churned User</option>
-          <option>Request A Review / Feedback</option>
-          <option>Close Sale</option>
-          <option>Generic Information</option>
-        </select>
+        <select id="goal"></select>
+        <span class="add-value-link" data-add="goals">+ Add new goal…</span>
       </div>
       <div class="field">
         <label for="mode">Mode</label>
-        <select id="mode">
-          <option value="technical">Technical</option>
-          <option value="billing">Billing</option>
-          <option value="lifecycle">Lifecycle</option>
-          <option value="operational">Operational</option>
-          <option value="tone-only">Tone only</option>
-        </select>
+        <select id="mode"></select>
+        <span class="add-value-link" data-add="modes">+ Add new mode…</span>
       </div>
     </div>
 
     <div class="row">
       <div class="field">
         <label for="audience">Audience</label>
-        <select id="audience">
-          <option>Frustrated Customer</option>
-          <option>Brand New User</option>
-          <option>Pre-Sale Inquiry</option>
-          <option>VIP Client</option>
-          <option>Churned Customer</option>
-          <option>Happy Customer</option>
-        </select>
+        <select id="audience"></select>
+        <span class="add-value-link" data-add="audiences">+ Add new audience…</span>
       </div>
       <div class="field">
         <label for="tone">Tone</label>
-        <select id="tone">
-          <option>Casual / Conversational</option>
-          <option>Strictly Professional</option>
-          <option>Apologetic</option>
-          <option>Direct</option>
-          <option>Calm</option>
-        </select>
+        <select id="tone"></select>
+        <span class="add-value-link" data-add="tones">+ Add new tone…</span>
       </div>
     </div>
 
@@ -330,23 +346,27 @@
   <div style="height: 8px"></div>
   <div class="btn-row">
     <button id="clearBtn">Clear</button>
-    <button id="saveTemplateBtn">Save as template</button>
   </div>
 
   <div class="status" id="formStatus"></div>
 
   <div id="output" style="margin-top: 16px"></div>
 
-  <button type="button" class="history-toggle" id="historyToggle">
-    <span id="historyToggleLabel">History &amp; learning</span>
+  <button type="button" class="history-toggle" id="libraryToggle">
+    <span id="libraryToggleLabel">Library &amp; learning</span>
     <span>&#9662;</span>
   </button>
   <div id="historyPanel">
     <div class="metrics-grid" id="metricsGrid"></div>
     <div class="btn-row" style="margin-bottom: 10px">
-      <button id="exportHistory">Export history (JSON)</button>
-      <button id="clearHistory">Clear history</button>
+      <button id="exportHistory">Export (JSON)</button>
+      <button id="clearHistory">Clear draft log</button>
     </div>
+    <h3 style="margin-top:12px">Library prompts</h3>
+    <div id="libraryList"></div>
+    <h3 style="margin-top:14px">Review queue (weekly)</h3>
+    <div id="suggestionList"></div>
+    <h3 style="margin-top:14px">Recent drafts</h3>
     <div id="historyList"></div>
   </div>
 

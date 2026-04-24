@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "note": "Seed entries for OM support. Voice envelope (role + house-style + output contract) is applied at runtime, not stored here.",
+  "entries": [
+    {
+      "scenario_title": "Campaign not displaying on site",
+      "scenario_summary": "Customer reports their campaign is live but not visible on their site.",
+      "scenario_instruction": "Do not speculate about root causes. Ask the customer to confirm campaign status, targeting rules, and whether the embed/pixel is installed. Link to the troubleshooting doc if provided.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Direct", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "Embed / pixel install troubleshooting",
+      "scenario_summary": "New customer unsure how to install the OM embed or pixel.",
+      "scenario_instruction": "Assume the customer has not installed correctly. Walk through the install check. Link to the official install doc.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Brand New User", "tone": "Calm", "mode": "technical", "concise": false }
+    },
+    {
+      "scenario_title": "Targeting rules not firing as expected",
+      "scenario_summary": "Campaign loads but targeting (page-level, referrer, cookie) isn't behaving as set.",
+      "scenario_instruction": "Ask for the exact URL tested and the current targeting config before proposing a cause.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Direct", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "Exit-intent not triggering on mobile",
+      "scenario_summary": "Customer reports exit-intent works on desktop but not mobile.",
+      "scenario_instruction": "Explain OM's mobile exit-intent behaviour plainly. Do not promise a fix if the expected behaviour matches product design.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Calm", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "Analytics / conversion tracking shows zero",
+      "scenario_summary": "Customer sees 0 conversions or 0 impressions despite live campaigns.",
+      "scenario_instruction": "Ask the customer to confirm the embed is active and whether any ad-blockers / cookie banners are on the test browser. Link to the analytics troubleshooting doc.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Direct", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "Integration broken (Mailchimp / ActiveCampaign / Klaviyo)",
+      "scenario_summary": "Connected email/CRM integration stopped syncing leads.",
+      "scenario_instruction": "Ask customer to reconnect the integration. Request the integration name and when it last worked before deeper investigation.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Calm", "mode": "technical", "concise": false }
+    },
+    {
+      "scenario_title": "A/B test not splitting traffic correctly",
+      "scenario_summary": "Customer running an A/B test reports uneven traffic distribution.",
+      "scenario_instruction": "Confirm their A/B setup matches documented behaviour before assuming a bug. Request screenshots/URLs.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "VIP Client", "tone": "Strictly Professional", "mode": "technical", "concise": false }
+    },
+    {
+      "scenario_title": "Campaign analytics 500 error",
+      "scenario_summary": "Customer hits a 500 error on the analytics dashboard (known issue previously flagged).",
+      "scenario_instruction": "Acknowledge the issue. Do not promise an ETA unless engineering has confirmed one. Offer a workaround if one is documented.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Apologetic", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "DSD (Device Specific Designs) behaviour question",
+      "scenario_summary": "Customer asking how DSD works or why it behaves a certain way across devices.",
+      "scenario_instruction": "Explain DSD's documented behaviour. Do not describe features not yet released.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Generic Information", "audience": "Brand New User", "tone": "Calm", "mode": "technical", "concise": false }
+    },
+    {
+      "scenario_title": "MonsterLinks / shareable links setup",
+      "scenario_summary": "Customer setting up MonsterLinks for the first time.",
+      "scenario_instruction": "Walk through the MonsterLinks setup. Link to the official MonsterLinks doc.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Brand New User", "tone": "Casual / Conversational", "mode": "technical", "concise": false }
+    },
+    {
+      "scenario_title": "Cloudflare / caching causing campaign load issues",
+      "scenario_summary": "Customer's campaign is affected by Cloudflare, Rocket Loader, or aggressive caching.",
+      "scenario_instruction": "Ask the customer to confirm caching setup before recommending changes. Link to the caching troubleshooting doc.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Explain Technical Issue", "audience": "Frustrated Customer", "tone": "Direct", "mode": "technical", "concise": true }
+    },
+    {
+      "scenario_title": "Refund request — within standard window",
+      "scenario_summary": "Customer requests refund within OM's standard refund policy window.",
+      "scenario_instruction": "Confirm plan and charge date before quoting any refund amount. Do not promise timelines outside standard policy.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Account Issue", "audience": "Frustrated Customer", "tone": "Apologetic", "mode": "billing", "concise": false }
+    },
+    {
+      "scenario_title": "Refund request — outside standard window (escalation)",
+      "scenario_summary": "Refund request falls outside standard window; needs careful handling or escalation.",
+      "scenario_instruction": "Confirm plan and charge date. Do not commit to a refund outside standard policy without confirming with the team.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Account Issue", "audience": "Frustrated Customer", "tone": "Strictly Professional", "mode": "billing", "concise": false }
+    },
+    {
+      "scenario_title": "Charge dispute / unexpected renewal",
+      "scenario_summary": "Customer surprised by an auto-renewal charge and disputing it.",
+      "scenario_instruction": "Confirm the plan, renewal date, and charge date. Do not speculate about why they weren't expecting it.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Account Issue", "audience": "Frustrated Customer", "tone": "Apologetic", "mode": "billing", "concise": false }
+    },
+    {
+      "scenario_title": "Plan downgrade request (churn risk)",
+      "scenario_summary": "Customer asking to downgrade, often a churn signal.",
+      "scenario_instruction": "Lead with value the customer has already gotten on the current plan. Do not push aggressively; close with clear next step if they still want to downgrade.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Stop Churn", "audience": "Churned Customer", "tone": "Calm", "mode": "billing", "concise": false }
+    },
+    {
+      "scenario_title": "Plan upgrade / quota exceeded",
+      "scenario_summary": "Customer hitting a plan limit and asking about upgrade.",
+      "scenario_instruction": "Name the limit they've hit. Link to the plan comparison doc. Do not upsell features irrelevant to their stated need.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Upselling", "audience": "Happy Customer", "tone": "Direct", "mode": "billing", "concise": true }
+    },
+    {
+      "scenario_title": "Trial-to-paid conversion question",
+      "scenario_summary": "Pre-sale lead asking what happens after trial or how conversion works.",
+      "scenario_instruction": "Answer the conversion question plainly. Link to pricing / plan doc. Do not oversell.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Close Sale", "audience": "Pre-Sale Inquiry", "tone": "Casual / Conversational", "mode": "billing", "concise": true }
+    },
+    {
+      "scenario_title": "VAT / tax invoice request",
+      "scenario_summary": "Customer requesting a VAT invoice, tax form, or corrected billing detail.",
+      "scenario_instruction": "Confirm the account and plan before responding. Do not commit to tax-detail changes without confirming they're supported.",
+      "dropdowns": { "product": "OptinMonster", "goal": "Account Issue", "audience": "VIP Client", "tone": "Strictly Professional", "mode": "billing", "concise": false }
+    }
+  ]
+}
