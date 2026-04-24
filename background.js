@@ -1,7 +1,8 @@
 // Service worker: context menus, quick transforms, revisit notifications.
 // Sidepanel communicates via chrome.storage, not tabs.sendMessage.
 
-import { logQuickTransform } from "./lib/storage.js";
+import { logQuickTransform, getUnresolvedDeliveredByConversation } from "./lib/storage.js";
+import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 import { retone, translate, RETONE_ACTIONS, LANGUAGES } from "./lib/quick-transform.js";
 import { seedIfEmpty } from "./lib/library.js";
 
@@ -154,11 +155,68 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (tab?.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
-// Revisit detection is handled inside the sidepanel when it reads the active
-// tab URL. Background no longer fires OS notifications for revisits — they
-// were easy to miss and didn't show the prior draft inline.
-chrome.runtime.onMessage.addListener((msg) => {
+// Ticket open: keep sidepanel in sync + tell the tab whether to show the
+// page-level revisit modal (content-ticket.js).
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "ticketOpened" && msg.conversationId) {
     chrome.storage.local.set({ last_ticket_opened: { id: msg.conversationId, ts: Date.now() } });
+    (async () => {
+      try {
+        const list = await getUnresolvedDeliveredByConversation(msg.conversationId);
+        if (!list.length) {
+          sendResponse({ showRevisitModal: false });
+          return;
+        }
+        const latest = list[list.length - 1];
+        const snippet = chosenAssistantReply(latest);
+        sendResponse({
+          showRevisitModal: true,
+          modalPayload: {
+            conversationId: msg.conversationId,
+            draftId: latest.id,
+            unresolvedCount: list.length,
+            snippetPreview: snippet.slice(0, 280),
+            lastAction: latest.delivery_action || "delivered"
+          }
+        });
+      } catch (e) {
+        console.warn("ticketOpened revisit check:", e);
+        sendResponse({ showRevisitModal: false });
+      }
+    })();
+    return true;
   }
+
+  if (msg?.type === "revisitPageAction") {
+    const tab = sender.tab;
+    const valid =
+      tab?.id &&
+      msg.conversationId &&
+      ["sent", "manager_approved", "open_panel"].includes(msg.action) &&
+      (msg.action === "open_panel" || msg.draftId);
+    if (!valid) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    (async () => {
+      try {
+        if (tab.windowId != null) await chrome.sidePanel.open({ windowId: tab.windowId });
+        else if (tab.id != null) await chrome.sidePanel.open({ tabId: tab.id });
+      } catch (e) {
+        console.warn("sidePanel.open:", e?.message || e);
+      }
+      await chrome.storage.local.set({
+        revisit_pending_action: {
+          action: msg.action,
+          draftId: msg.draftId || null,
+          conversationId: msg.conversationId,
+          ts: Date.now()
+        }
+      });
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  return undefined;
 });

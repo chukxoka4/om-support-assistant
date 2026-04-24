@@ -142,21 +142,6 @@
 
     .empty { color: var(--muted); font-size: 12px; font-style: italic; }
 
-    .outcome-chip {
-      display: flex; align-items: center; gap: 6px;
-      margin-top: 6px; padding: 6px 8px;
-      background: #fffbea; border: 1px solid #fde68a; border-radius: 6px;
-      font-size: 12px;
-    }
-    .outcome-chip .label { color: #78350f; font-weight: 500; margin-right: 4px; }
-    .outcome-chip button {
-      padding: 3px 8px; font-size: 11px; border-radius: 4px;
-    }
-    .outcome-chip button.sent { background: #dcfce7; border-color: #86efac; color: #166534; }
-    .outcome-chip button.edited { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
-    .outcome-chip button.rewrote { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
-    .outcome-chip .skip { margin-left: auto; background: transparent; border: none; color: var(--muted); }
-
     .history-toggle {
       display: flex; justify-content: space-between; align-items: center;
       width: 100%; padding: 10px 14px; margin-top: 16px;
@@ -228,14 +213,6 @@
     .suggestion .s-change { margin: 4px 0; color: #422006; }
     .suggestion .s-actions { display: flex; gap: 6px; margin-top: 6px; }
 
-    .correction-box { margin-top: 8px; }
-    .correction-box textarea {
-      width: 100%; min-height: 80px; font-size: 12px;
-      padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-      font-family: inherit;
-    }
-    .correction-box .cb-actions { display: flex; gap: 6px; margin-top: 6px; }
-
     .add-value-link {
       display: inline-block; font-size: 11px; color: var(--primary);
       cursor: pointer; margin-top: 3px;
@@ -255,6 +232,40 @@
     }
     .revisit .r-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .revisit .r-actions button { padding: 6px 10px; font-size: 12px; }
+    .revisit .r-rewrite {
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid #bfdbfe;
+    }
+    .revisit .r-rewrite label { font-size: 12px; color: #1e3a8a; }
+    .revisit .r-rewrite textarea.revisit-rewrite-input {
+      width: 100%; min-height: 100px; margin-top: 6px; font-size: 12px;
+      resize: vertical;
+    }
+    .revisit .r-rewrite-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+    .step-one {
+      background: #fefce8; border: 1px solid #fde047; border-radius: var(--radius);
+      padding: 12px 14px; margin-bottom: 12px; font-size: 12px; color: #422006;
+    }
+    .step-one .s1-head { font-weight: 600; color: #854d0e; margin-bottom: 6px; }
+    .step-one .s1-help { margin: 0 0 10px; color: #78716c; font-size: 11px; line-height: 1.45; }
+    .step-one .s1-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    .step-one .s1-row label { font-weight: 500; color: #422006; }
+    .step-one textarea.s1-text {
+      width: 100%; min-height: 80px; margin-top: 4px; font-size: 12px;
+      display: none;
+    }
+    .step-one.s1-show-text textarea.s1-text { display: block; }
+    .step-one .s1-saved { margin-left: 8px; }
+
+    .revisit .r-mgrrw {
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid #bfdbfe;
+    }
+    .revisit .r-mgrrw label { font-size: 12px; color: #1e3a8a; }
+    .revisit .mgr-rw-text {
+      width: 100%; min-height: 100px; margin-top: 6px; font-size: 12px;
+      resize: vertical;
+    }
+    .revisit .r-mgrrw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -288,8 +299,6 @@
   </div>
 
   <h2>OM Support Assistant</h2>
-
-  <div id="revisitCard" style="display:none"></div>
 
   <div class="card">
     <div class="field">
@@ -358,6 +367,8 @@
     </div>
   </div>
 
+  <div id="revisitCard" style="display:none"></div>
+
   <button id="generateBtn" class="primary full">Generate reply</button>
   <div style="height: 8px"></div>
   <div class="btn-row">
@@ -367,6 +378,7 @@
   <div class="status" id="formStatus"></div>
 
   <div id="output" style="margin-top: 16px"></div>
+  <div id="stepOneSlot" style="display: none"></div>
 
   <button type="button" class="history-toggle" id="libraryToggle">
     <span id="libraryToggleLabel">Library &amp; learning</span>

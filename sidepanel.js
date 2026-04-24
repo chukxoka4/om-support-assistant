@@ -5,13 +5,13 @@ import {
   getTaxonomy, addTaxonomyValue,
   getAllDrafts, updateDraft,
   getUnresolvedDeliveredByConversation,
-  getDismissal, setDismissal
+  draftIsRevisitPending
 } from "./lib/storage.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
   getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry
 } from "./lib/library.js";
-import { proposeSuggestion } from "./lib/suggestions.js";
+import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
 const state = {
@@ -19,10 +19,12 @@ const state = {
   lastParsed: null,
   lastLibraryEntryId: null,
   lastFocusedField: "draft",      // "draft" | "prompt"
-  rewriteOf: null                  // draft id being rewritten
+  rewriteOf: null,               // draft id being rewritten
+  /** Hide revisit UI for this conversation until you open a different ticket (session only). */
+  revisitHiddenConversationId: null,
+  /** Managerial rewrite textarea open for this draft id. */
+  revisitMgrRewriteDraftId: null
 };
-
-const REVISIT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Track which of the two input fields was focused last, for routing
 // "Send to Draft/Prompt" context-menu actions when focus has drifted.
@@ -224,6 +226,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes.last_ticket_opened?.newValue) {
     renderRevisitCard().catch(() => {});
+    refreshStepOneSlot().catch(() => {});
+  }
+  if (changes.revisit_pending_action?.newValue) {
+    consumeRevisitPendingAction().catch(() => {});
   }
 });
 
@@ -266,6 +272,8 @@ el("clearBtn").addEventListener("click", () => {
   el("draft").value = "";
   el("promptExtra").value = "";
   el("output").innerHTML = "";
+  const slot = el("stepOneSlot");
+  if (slot) { slot.innerHTML = ""; slot.style.display = "none"; }
   el("libraryPick").value = "";
   el("libraryPickMeta").textContent = "";
   setStatus(el("formStatus"), "");
@@ -306,24 +314,54 @@ function renderOutput(parsed, provider) {
   `;
   el("output").querySelectorAll("button[data-copy]").forEach((b) => b.addEventListener("click", () => copyVersion(b.dataset.copy)));
   el("output").querySelectorAll("button[data-insert]").forEach((b) => b.addEventListener("click", () => insertVersion(b.dataset.insert)));
+  refreshStepOneSlot().catch(() => {});
 }
 
 function versionHtml(key) { return el("output").querySelector(`.output-box.${key}`)?.innerHTML || ""; }
 function versionText(key) { return el("output").querySelector(`.output-box.${key}`)?.innerText || ""; }
 
+function versionLabel(key) {
+  return key === "version-b" ? "Version B (Revamp)" : "Version A (Polish)";
+}
+
+function copyInsertStoredMessage(action, key) {
+  const v = versionLabel(key);
+  if (action === "insert") {
+    return `Inserted ${v} into the ticket editor. Ticket + delivery saved for revisit (last copy or insert wins if you switch versions).`;
+  }
+  return `Copied ${v} to clipboard. Ticket + delivery saved for revisit (last copy wins if you switch versions).`;
+}
+
 async function copyVersion(key) {
   const html = versionHtml(key), text = versionText(key);
+  let clipOk = false;
   try {
     await navigator.clipboard.write([new ClipboardItem({
       "text/html": new Blob([html], { type: "text/html" }),
       "text/plain": new Blob([text], { type: "text/plain" })
     })]);
-    setStatus(el("formStatus"), "Copied with formatting.", "ok");
+    clipOk = true;
   } catch {
-    await navigator.clipboard.writeText(text);
-    setStatus(el("formStatus"), "Copied as plain text.", "ok");
+    try {
+      await navigator.clipboard.writeText(text);
+      clipOk = true;
+    } catch {
+      clipOk = false;
+    }
   }
-  showOutcomeChip(key, "copy");
+  if (state.lastDraftId) {
+    await updateDraft(state.lastDraftId, {
+      delivery_action: "copy",
+      delivered_at: new Date().toISOString(),
+      chosen_version: key
+    });
+  }
+  if (clipOk) {
+    setStatus(el("formStatus"), copyInsertStoredMessage("copy", key), "ok");
+  } else {
+    setStatus(el("formStatus"), "Could not copy to clipboard. Delivery was still saved for this ticket.", "error");
+  }
+  refreshStepOneSlot().catch(() => {});
 }
 
 async function insertVersion(key) {
@@ -336,8 +374,15 @@ async function insertVersion(key) {
       target: { tabId: tab.id }, func: insertHtmlInActiveEditor, args: [html]
     });
     if (result?.result?.ok) {
-      setStatus(el("formStatus"), "Inserted into editor.", "ok");
-      showOutcomeChip(key, "insert");
+      if (state.lastDraftId) {
+        await updateDraft(state.lastDraftId, {
+          delivery_action: "insert",
+          delivered_at: new Date().toISOString(),
+          chosen_version: key
+        });
+      }
+      setStatus(el("formStatus"), copyInsertStoredMessage("insert", key), "ok");
+      refreshStepOneSlot().catch(() => {});
     } else {
       setStatus(el("formStatus"), "No editor focused. Copied instead.", "error");
       await copyVersion(key);
@@ -371,84 +416,6 @@ function insertHtmlInActiveEditor(html) {
   if (editor) return doInsert(editor);
   if (sel?.rangeCount) return doInsert(null);
   return { ok: false };
-}
-
-// ---------- outcome chip ----------
-function showOutcomeChip(versionKey, action) {
-  if (!state.lastDraftId) return;
-  const section = el("output").querySelector(`.output-box.${versionKey}`)?.parentElement;
-  if (!section) return;
-  section.querySelector(".outcome-chip")?.remove();
-  section.querySelector(".correction-box")?.remove();
-
-  const chip = document.createElement("div");
-  chip.className = "outcome-chip";
-  chip.innerHTML = `
-    <span class="label">${action === "copy" ? "Copied" : "Inserted"} — outcome?</span>
-    <button class="sent" data-outcome="sent">Sent as-is</button>
-    <button class="sent" data-outcome="manager_approved" title="Sent AND Erica approved">Manager approved</button>
-    <button class="edited" data-outcome="edited">Edited</button>
-    <button class="rewrote" data-outcome="rewrote">Rewrote</button>
-    <button class="skip" data-outcome="skip">skip</button>
-  `;
-  section.appendChild(chip);
-
-  const draftId = state.lastDraftId;
-  const libId = state.lastLibraryEntryId;
-  const userOutput = versionText(versionKey);
-  const timer = setTimeout(() => chip.remove(), 20000);
-
-  chip.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      clearTimeout(timer);
-      const outcome = btn.dataset.outcome;
-      if (outcome === "skip") { chip.remove(); return; }
-      await updateDraft(draftId, { outcome, chosen_version: versionKey, delivery_action: action, delivered_at: new Date().toISOString() });
-      if (libId) {
-        if (outcome === "sent") await bumpScore(libId, "sent_as_is", 1);
-        if (outcome === "manager_approved") await bumpScore(libId, "manager_approved", 1);
-      }
-      if (outcome === "edited" || outcome === "rewrote") {
-        chip.remove();
-        promptForCorrection(section, draftId, libId, userOutput, outcome);
-        return;
-      }
-      setStatus(el("formStatus"), `Logged: ${outcome.replace("_", " ")}.`, "ok");
-      chip.remove();
-      if (el("historyPanel").classList.contains("open")) renderLibraryPanel();
-    });
-  });
-}
-
-function promptForCorrection(section, draftId, libId, userOutput, outcome) {
-  const box = document.createElement("div");
-  box.className = "correction-box";
-  box.innerHTML = `
-    <label style="font-size:11px;color:var(--muted)">Paste the final version actually sent:</label>
-    <textarea placeholder="Paste Erica's / your final sent version here…"></textarea>
-    <div class="cb-actions">
-      <button class="primary save">Save &amp; analyse</button>
-      <button class="cancel">Skip</button>
-    </div>
-  `;
-  section.appendChild(box);
-
-  box.querySelector(".cancel").addEventListener("click", () => box.remove());
-  box.querySelector(".save").addEventListener("click", async () => {
-    const finalText = box.querySelector("textarea").value.trim();
-    if (!finalText) { box.remove(); return; }
-    await updateDraft(draftId, { final_sent: finalText, correction_logged: true });
-    setStatus(el("formStatus"), "Analysing correction…", "ok");
-    box.remove();
-    if (libId) {
-      const { error } = await proposeSuggestion({
-        entryId: libId, draftId, userOutput, finalOutput: finalText, trigger: outcome
-      });
-      if (!error) await bumpScore(libId, "rewrites_absorbed", 1);
-      setStatus(el("formStatus"), error ? `Suggestion error: ${error}` : "Suggestion queued in Library.", error ? "error" : "ok");
-    }
-    if (el("historyPanel").classList.contains("open")) renderLibraryPanel();
-  });
 }
 
 // ---------- library panel ----------
@@ -583,7 +550,7 @@ async function renderRecentDrafts() {
     const badge = isQuick
       ? `<span class="badge quick">${d.action_type === "quick-translate" ? "translate" : "retone"}</span>`
       : d.outcome
-      ? `<span class="badge ${d.outcome === "manager_approved" ? "sent" : d.outcome}">${d.outcome.replace("_", " ")}</span>`
+      ? `<span class="badge ${d.outcome === "manager_approved" || d.outcome === "managerial_rewrite" ? "sent" : d.outcome}">${(d.outcome || "").replace(/_/g, " ")}</span>`
       : `<span class="badge none">no outcome</span>`;
     const title = isQuick
       ? (d.action_type === "quick-translate" ? "Translate → " + d.action_id : "Retone: " + d.action_id)
@@ -606,78 +573,314 @@ async function getCurrentTicket() {
   } catch { return { conversationId: null, ticketUrl: null }; }
 }
 
+async function focusAssistantPanel() {
+  try {
+    const w = await chrome.windows.getCurrent();
+    if (w?.id != null && chrome.sidePanel?.open) {
+      await chrome.sidePanel.open({ windowId: w.id });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** One of three mutually exclusive Step 1 modes (saved as verbatim + boundary). */
+function deriveStep1Mode(d) {
+  if (d.final_used_verbatim === false) return "edited";
+  if (d.final_used_verbatim === true && d.final_used_boundary === "manager") return "manager_first";
+  if (d.final_used_verbatim === true) return "as_copied";
+  return "";
+}
+
+/** scope must be unique per mount (e.g. "revisit" vs "slot") so radio groups never collide in the DOM. */
+function buildStepOneBlockHtml(draft, scope) {
+  const vid = draft.id;
+  const ns = `${vid}-${scope}`;
+  const mode = deriveStep1Mode(draft);
+  const asCopied = mode === "as_copied" ? "checked" : "";
+  const edited = mode === "edited" ? "checked" : "";
+  const mgrFirst = mode === "manager_first" ? "checked" : "";
+  const showText = mode === "edited" ? " s1-show-text" : "";
+  return `
+    <div class="step-one${showText}" data-step1-root="${vid}" data-step1-scope="${scope}">
+      <div class="s1-head">Step 1 — What went forward?</div>
+      <p class="s1-help">Pick one. If you edited before sending, paste your real wording below.</p>
+      <div class="s1-row">
+        <label><input type="radio" name="s1mode-${ns}" value="as_copied" ${asCopied}/> Used assistant reply as copied</label>
+        <label><input type="radio" name="s1mode-${ns}" value="edited" ${edited}/> I edited / different text</label>
+        <label><input type="radio" name="s1mode-${ns}" value="manager_first" ${mgrFirst}/> Manager saw this first</label>
+      </div>
+      <textarea class="s1-text" rows="5" placeholder="Paste the wording you actually put forward (links, edits)…"></textarea>
+      <div class="s1-row">
+        <button type="button" class="primary s1-save">Save Step 1</button>
+        ${draft.final_used_at ? `<span class="meta s1-saved">Saved ${escapeHtml(new Date(draft.final_used_at).toLocaleString())}</span>` : ""}
+      </div>
+    </div>`;
+}
+
+function bindStepOneRoot(root, draft, stage, scope, previewOpts = null) {
+  if (!root) return;
+  const id = draft.id;
+  const ns = `${id}-${scope}`;
+  const previewEl = previewOpts?.el || null;
+  const baseFallback = previewOpts?.baseAssistantText ?? chosenAssistantReply(draft);
+
+  const syncStep2Preview = () => {
+    if (!previewEl) return;
+    const mEl = root.querySelector(`input[name="s1mode-${ns}"]:checked`);
+    const raw =
+      mEl?.value === "edited"
+        ? (root.querySelector(".s1-text")?.value || "")
+        : baseFallback;
+    const t = String(raw);
+    previewEl.textContent = t.length > 400 ? `${t.slice(0, 400)}…` : t;
+  };
+
+  const syncVis = () => {
+    const edited = root.querySelector(`input[name="s1mode-${ns}"][value="edited"]`)?.checked;
+    root.classList.toggle("s1-show-text", !!edited);
+    syncStep2Preview();
+  };
+  root.querySelectorAll(`input[name="s1mode-${ns}"]`).forEach((inp) => inp.addEventListener("change", syncVis));
+  syncVis();
+  const ta = root.querySelector(".s1-text");
+  if (ta) {
+    ta.value = draft.final_used_text || "";
+    ta.addEventListener("input", syncStep2Preview);
+  }
+  syncStep2Preview();
+
+  root.querySelector(".s1-save")?.addEventListener("click", async () => {
+    const modeEl = root.querySelector(`input[name="s1mode-${ns}"]:checked`);
+    if (!modeEl) {
+      setStatus(el("formStatus"), "Pick one Step 1 option.", "error");
+      return;
+    }
+    const mode = modeEl.value;
+    const text = (ta?.value || "").trim();
+    if (mode === "edited" && !text) {
+      setStatus(el("formStatus"), "Paste what you actually put forward, or pick another option.", "error");
+      return;
+    }
+    const verbatim = mode !== "edited";
+    const boundary = mode === "manager_first" ? "manager" : "customer";
+    await updateDraft(draft.id, {
+      final_used_verbatim: verbatim,
+      final_used_text: mode === "edited" ? text : null,
+      final_used_boundary: boundary,
+      final_used_at: new Date().toISOString(),
+      final_used_stage: stage
+    });
+    setStatus(el("formStatus"), "Step 1 saved. You can update it anytime before Step 2.", "ok");
+    await renderRevisitCard();
+    await refreshStepOneSlot();
+    if (el("historyPanel").classList.contains("open")) renderLibraryPanel();
+  });
+}
+
+async function refreshStepOneSlot() {
+  const slot = el("stepOneSlot");
+  if (!slot) return;
+  const sid = state.lastDraftId;
+  if (!sid) {
+    slot.style.display = "none";
+    slot.innerHTML = "";
+    return;
+  }
+  const drafts = await getAllDrafts();
+  const d = drafts.find((x) => x.id === sid);
+  if (!d || !draftIsRevisitPending(d)) {
+    slot.style.display = "none";
+    slot.innerHTML = "";
+    return;
+  }
+  const { conversationId } = await getCurrentTicket();
+  const unresolved = conversationId ? await getUnresolvedDeliveredByConversation(conversationId) : [];
+  const latest = unresolved.length ? unresolved[unresolved.length - 1] : null;
+  const card = el("revisitCard");
+  const revisitShowsStep1 =
+    card?.style?.display !== "none" &&
+    conversationId &&
+    latest &&
+    latest.id === d.id &&
+    state.revisitHiddenConversationId !== conversationId;
+  if (revisitShowsStep1) {
+    slot.style.display = "none";
+    slot.innerHTML = "";
+    return;
+  }
+  slot.style.display = "block";
+  slot.innerHTML = buildStepOneBlockHtml(d, "slot");
+  bindStepOneRoot(slot.querySelector("[data-step1-root]"), d, "post_copy", "slot", null);
+}
+
+async function saveManagerialRewrite(draft) {
+  const wrap = el("revisitCard")?.querySelector(".r-mgrrw");
+  const text = (wrap?.querySelector(".mgr-rw-text")?.value || "").trim();
+  if (!text) {
+    setStatus(el("formStatus"), "Paste the managerial rewrite first.", "error");
+    return;
+  }
+  await updateDraft(draft.id, { outcome: "managerial_rewrite", manager_rewrite_text: text });
+  if (draft.library_entry_id) await bumpScore(draft.library_entry_id, "manager_approved", 5);
+  setStatus(el("formStatus"), "Logged managerial rewrite (+5, same weight as manager approved).", "ok");
+  state.revisitMgrRewriteDraftId = null;
+  await focusAssistantPanel();
+  el("formStatus")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  await renderRevisitCard();
+  await refreshStepOneSlot();
+  if (el("historyPanel").classList.contains("open")) renderLibraryPanel();
+}
+
+async function consumeRevisitPendingAction() {
+  const { revisit_pending_action: p } = await chrome.storage.local.get("revisit_pending_action");
+  if (!p) return;
+  if (typeof p.ts !== "number" || Date.now() - p.ts > 120_000) {
+    await chrome.storage.local.remove("revisit_pending_action");
+    return;
+  }
+  await chrome.storage.local.remove("revisit_pending_action");
+
+  if (p.action === "open_panel") {
+    const { conversationId } = await getCurrentTicket();
+    if (conversationId && String(conversationId) === String(p.conversationId)) {
+      state.revisitHiddenConversationId = null;
+      await focusAssistantPanel();
+      await renderRevisitCard();
+      el("revisitCard")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+      setStatus(el("formStatus"), "Use the blue card: Step 1, then Sent / Manager approved / Managerial rewrite.", "ok");
+    }
+    return;
+  }
+
+  const drafts = await getAllDrafts();
+  const draft = drafts.find((d) => d.id === p.draftId);
+  if (!draft || String(draft.conversation_id) !== String(p.conversationId)) return;
+  state.revisitHiddenConversationId = null;
+  await handleRevisit(p.action, draft, p.conversationId);
+}
+
 // ---------- revisit card ----------
 async function renderRevisitCard() {
   const card = el("revisitCard");
   const { conversationId } = await getCurrentTicket();
-  if (!conversationId) { card.style.display = "none"; card.innerHTML = ""; return; }
+  if (!conversationId) {
+    card.style.display = "none";
+    card.innerHTML = "";
+    state.revisitHiddenConversationId = null;
+    state.revisitMgrRewriteDraftId = null;
+    await refreshStepOneSlot();
+    return;
+  }
 
-  const dismissed = await getDismissal(conversationId);
-  if (dismissed && Date.now() - dismissed < REVISIT_COOLDOWN_MS) {
-    card.style.display = "none"; card.innerHTML = ""; return;
+  if (state.revisitHiddenConversationId && state.revisitHiddenConversationId !== conversationId) {
+    state.revisitHiddenConversationId = null;
   }
 
   const unresolved = await getUnresolvedDeliveredByConversation(conversationId);
-  if (!unresolved.length) { card.style.display = "none"; card.innerHTML = ""; return; }
+  if (!unresolved.length) {
+    card.style.display = "none";
+    card.innerHTML = "";
+    state.revisitMgrRewriteDraftId = null;
+    await refreshStepOneSlot();
+    return;
+  }
+
+  if (state.revisitMgrRewriteDraftId &&
+      !unresolved.some((d) => d.id === state.revisitMgrRewriteDraftId)) {
+    state.revisitMgrRewriteDraftId = null;
+  }
+
+  if (state.revisitHiddenConversationId === conversationId) {
+    card.style.display = "none";
+    card.innerHTML = "";
+    await refreshStepOneSlot();
+    return;
+  }
 
   const latest = unresolved[unresolved.length - 1];
-  const versionKey = latest.chosen_version || "version-a";
-  const snippet = latest.output_parsed?.[versionKey === "version-b" ? "versionB" : "versionA"] || latest.draft_input || "";
+  const assistantBase = chosenAssistantReply(latest);
   const when = new Date(latest.delivered_at || latest.ts).toLocaleString();
+  const showMgrRw = state.revisitMgrRewriteDraftId === latest.id;
+  const step1Html = buildStepOneBlockHtml(latest, "revisit");
+
+  const slot = el("stepOneSlot");
+  if (slot) {
+    slot.innerHTML = "";
+    slot.style.display = "none";
+  }
 
   card.innerHTML = `
     <div class="revisit">
-      <div class="r-head">Ticket #${conversationId} — you drafted this before</div>
-      <div class="r-sub">${unresolved.length} unresolved · last ${latest.delivery_action || "drafted"} ${when}</div>
-      <div class="r-draft">${escapeHtml(snippet.slice(0, 400))}${snippet.length > 400 ? "…" : ""}</div>
+      ${step1Html}
+      <div class="r-head">Ticket #${conversationId} — prior draft from assistant</div>
+      <div class="r-sub">${unresolved.length} unresolved · last ${latest.delivery_action || "delivered"} ${when}</div>
+      <div class="r-sub" style="margin-top:4px;color:#64748b">Step 2 preview (updates as you edit Step 1)</div>
+      <div class="r-draft" data-r-draft-preview="1"></div>
       <div class="r-actions">
-        <button class="primary" data-revisit="sent">Sent as-is</button>
-        <button class="primary" data-revisit="manager_approved">Manager approved</button>
-        <button data-revisit="rewrite">Rewrite</button>
-        <button class="ghost" data-revisit="dismiss">Dismiss</button>
+        <button type="button" class="primary" data-revisit="sent">Sent as-is (+2)</button>
+        <button type="button" class="primary" data-revisit="manager_approved">Manager approved (+5)</button>
+        <button type="button" data-revisit="managerial_rewrite">${showMgrRw ? "Cancel managerial rewrite" : "Managerial rewrite (+5)"}</button>
+        <button type="button" class="ghost" data-revisit="dismiss">Dismiss</button>
       </div>
+      ${showMgrRw ? `
+      <div class="r-mgrrw">
+        <label for="mgrRwText">Paste manager’s rewrite (final wording)</label>
+        <textarea id="mgrRwText" class="mgr-rw-text" placeholder="Paste the version after managerial rewrite…"></textarea>
+        <div class="r-mgrrw-actions">
+          <button type="button" class="primary mgr-rw-save">Save managerial rewrite</button>
+          <button type="button" class="mgr-rw-cancel">Cancel</button>
+        </div>
+      </div>` : ""}
     </div>
   `;
   card.style.display = "";
 
+  const previewDraftEl = card.querySelector("[data-r-draft-preview]");
+  const s1root = card.querySelector("[data-step1-root]");
+  bindStepOneRoot(s1root, latest, "post_revisit", "revisit", {
+    el: previewDraftEl,
+    baseAssistantText: assistantBase
+  });
+
   card.querySelectorAll("button[data-revisit]").forEach((btn) => {
     btn.addEventListener("click", () => handleRevisit(btn.dataset.revisit, latest, conversationId));
   });
+  card.querySelector(".mgr-rw-save")?.addEventListener("click", () => saveManagerialRewrite(latest));
+  card.querySelector(".mgr-rw-cancel")?.addEventListener("click", async () => {
+    state.revisitMgrRewriteDraftId = null;
+    await renderRevisitCard();
+  });
+  await refreshStepOneSlot();
 }
 
 async function handleRevisit(action, draft, conversationId) {
   if (action === "dismiss") {
-    await setDismissal(conversationId, Date.now());
+    state.revisitHiddenConversationId = conversationId;
+    state.revisitMgrRewriteDraftId = null;
     await renderRevisitCard();
     return;
   }
   if (action === "sent" || action === "manager_approved") {
     await updateDraft(draft.id, { outcome: action });
     if (draft.library_entry_id) {
-      await bumpScore(draft.library_entry_id, action === "sent" ? "sent_as_is" : "manager_approved", 1);
+      const field = action === "sent" ? "sent_as_is" : "manager_approved";
+      const amount = action === "sent" ? 2 : 5;
+      await bumpScore(draft.library_entry_id, field, amount);
     }
-    setStatus(el("formStatus"), `Logged: ${action.replace("_", " ")}.`, "ok");
+    setStatus(el("formStatus"), `Logged: ${action.replace(/_/g, " ")}.`, "ok");
+    await focusAssistantPanel();
+    el("formStatus")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    await renderRevisitCard();
+    if (el("historyPanel").classList.contains("open")) renderLibraryPanel();
+    return;
+  }
+  if (action === "managerial_rewrite") {
+    state.revisitMgrRewriteDraftId =
+      state.revisitMgrRewriteDraftId === draft.id ? null : draft.id;
     await renderRevisitCard();
     return;
   }
-  if (action === "rewrite") {
-    await hydrateFromDraft(draft);
-  }
-}
-
-async function hydrateFromDraft(draft) {
-  state.rewriteOf = draft.id;
-  if (draft.product) el("product").value = draft.product;
-  setDropdowns({
-    goal: draft.goal, audience: draft.audience, tone: draft.tone, mode: draft.mode, concise: draft.concise
-  });
-  if (draft.library_entry_id) el("libraryPick").value = draft.library_entry_id;
-  el("promptExtra").value = draft.prompt_extra || "";
-  // Show prior draft text at top of Draft field as reference context
-  const prior = draft.output_parsed?.versionA || draft.output_parsed?.versionB || "";
-  if (prior) el("draft").value = `(prior draft — adjust below)\n${prior}\n\n---\n`;
-  el("promptExtra").focus();
-  setStatus(el("formStatus"), "Rewrite mode: edit prompt, then Generate.", "ok");
 }
 
 // ---------- init ----------
@@ -687,6 +890,16 @@ async function hydrateFromDraft(draft) {
   await renderLibraryPicker();
   await consumeIncomingSelection();
   await renderRevisitCard();
-  chrome.tabs.onActivated?.addListener?.(() => renderRevisitCard().catch(() => {}));
-  chrome.tabs.onUpdated?.addListener?.((_, info) => { if (info.url) renderRevisitCard().catch(() => {}); });
+  await consumeRevisitPendingAction();
+  await refreshStepOneSlot();
+  chrome.tabs.onActivated?.addListener?.(() => {
+    renderRevisitCard().catch(() => {});
+    refreshStepOneSlot().catch(() => {});
+  });
+  chrome.tabs.onUpdated?.addListener?.((_, info) => {
+    if (info.url) {
+      renderRevisitCard().catch(() => {});
+      refreshStepOneSlot().catch(() => {});
+    }
+  });
 })();
