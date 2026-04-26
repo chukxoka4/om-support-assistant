@@ -2,6 +2,8 @@
 
 Living planning docs. Read in order.
 
+**Before writing any code, read [ARCHITECTURE.md](../ARCHITECTURE.md).** It is the source of truth for layers, naming, and what goes where.
+
 1. **[01-PRODUCT.md](01-PRODUCT.md)** — what the product is today, what's half-built, what's coming.
 2. **[02-BUGS.md](02-BUGS.md)** — known bugs and the order to fix them. Each fix names the files to touch.
 3. **[03-FEATURES.md](03-FEATURES.md)** — new features. Each feature names the layer, files, and what to do.
