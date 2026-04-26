@@ -448,7 +448,12 @@ function renderOutput(parsed, provider) {
       </div>
     </div>` : "";
 
+  const banner = parsed.wasParsed === false
+    ? `<div class="parse-warn">⚠ Couldn't parse the model's labels — showing the raw response below. Try again or switch provider.</div>`
+    : "";
+
   el("output").innerHTML = `
+    ${banner}
     ${section("Reason", "reason", parsed.reason)}
     ${section("Version A — The Polish", "version-a", parsed.versionA)}
     ${section("Version B — The Revamp", "version-b", parsed.versionB)}
