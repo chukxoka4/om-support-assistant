@@ -291,11 +291,22 @@
     </div>
     <div class="btn-row">
       <button id="saveSettings" class="primary">Save</button>
-      <button id="exportLibrary">Export templates</button>
-      <button id="importLibrary">Import…</button>
+      <button id="exportLibrary">Export library</button>
+      <button id="importLibrary">Import library…</button>
+      <button id="resetLibrary">Reset to seeds</button>
       <input type="file" id="importFile" accept=".json" style="display:none" />
     </div>
     <div class="status" id="settingsStatus"></div>
+    <div id="importConfirm" class="import-confirm" hidden style="margin-top:10px; padding:10px; border:1px solid #e0e0e0; border-radius:6px; background:#fafafa;">
+      <div id="importSummary" style="font-size:12px; line-height:1.5; margin-bottom:8px;"></div>
+      <div class="btn-row">
+        <button id="importMerge" class="primary">Merge new only</button>
+        <button id="importReplace">Replace all</button>
+        <button id="importCancel">Cancel</button>
+      </div>
+      <div id="importMergeHint" class="meta" style="margin-top:6px;"></div>
+      <div id="importReplaceHint" class="meta" style="color:#b00020;"></div>
+    </div>
   </div>
 
   <h2>OM Support Assistant</h2>

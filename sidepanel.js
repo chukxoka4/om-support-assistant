@@ -9,8 +9,10 @@ import {
 } from "./lib/storage.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
-  getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry
+  getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
+  replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
+import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
@@ -124,6 +126,143 @@ async function refreshProviderSelects() {
     providerRow.style.display = "none";
   }
 }
+
+// ---------- library export / import / reset (mirrors options.js) ----------
+let pendingLibraryImport = null; // { entries, diff }
+
+function setSettingsStatus(text, kind = "ok") {
+  setStatus(el("settingsStatus"), text, kind);
+}
+
+function validateLibraryEntry(entry, idx) {
+  if (!entry || typeof entry !== "object")
+    throw new Error(`Entry ${idx}: not an object`);
+  if (typeof entry.id !== "string" || !entry.id)
+    throw new Error(`Entry ${idx}: missing id`);
+  if (typeof entry.product !== "string" || !entry.product)
+    throw new Error(`Entry ${idx}: missing product`);
+  if (!entry.dropdowns || typeof entry.dropdowns !== "object")
+    throw new Error(`Entry ${idx}: missing dropdowns`);
+  if (typeof entry.scenario_instruction !== "string" || !entry.scenario_instruction)
+    throw new Error(`Entry ${idx}: missing scenario_instruction`);
+}
+
+function renderLibraryImportConfirm(diff) {
+  el("importSummary").innerHTML = `
+    File: <b>${diff.incomingTotal}</b> entries · You have <b>${diff.currentTotal}</b>.<br>
+    <b>${diff.toAdd.length}</b> new ·
+    <b>${diff.sameAsLocal.length}</b> identical ·
+    <b>${diff.conflicts.length}</b> conflicting.`;
+  el("importMergeHint").textContent =
+    `Merge: adds ${diff.toAdd.length} new. Existing entries (and scores) untouched.`;
+  el("importReplaceHint").textContent =
+    `Replace: drops your ${diff.currentTotal} entries. Scores reset.`;
+  el("importConfirm").hidden = false;
+}
+
+function closeLibraryImportConfirm() {
+  el("importConfirm").hidden = true;
+  pendingLibraryImport = null;
+}
+
+el("exportLibrary").addEventListener("click", async () => {
+  try {
+    const [library, drafts] = await Promise.all([getAllEntries(), getAllDrafts()]);
+    const payload = {
+      exported_at: new Date().toISOString(),
+      version: 3,
+      library,
+      drafts
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `om-assistant-library-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSettingsStatus(`Exported ${library.length} entries.`, "ok");
+  } catch (err) {
+    setSettingsStatus(`Export failed: ${err.message}`, "err");
+  }
+});
+
+el("importLibrary").addEventListener("click", () => el("importFile").click());
+
+el("importFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (parsed.version !== 3) throw new Error(`Unsupported version: ${parsed.version}`);
+    if (!Array.isArray(parsed.library)) throw new Error("Missing library array");
+    parsed.library.forEach(validateLibraryEntry);
+    const current = await getAllEntries();
+    const diff = diffImport(current, parsed.library);
+    pendingLibraryImport = { entries: parsed.library, diff };
+    renderLibraryImportConfirm(diff);
+    setSettingsStatus(`Loaded ${parsed.library.length} entries — confirm below.`, "ok");
+  } catch (err) {
+    closeLibraryImportConfirm();
+    setSettingsStatus(`Import failed: ${err.message}`, "err");
+  }
+});
+
+el("importMerge").addEventListener("click", async () => {
+  if (!pendingLibraryImport) return;
+  try {
+    const current = await getAllEntries();
+    const merged = mergeNewOnly(
+      current.map(({ weighted_score, ...rest }) => rest),
+      pendingLibraryImport.entries
+    );
+    await replaceAllEntries(merged);
+    setSettingsStatus(
+      `Merged: added ${pendingLibraryImport.diff.toAdd.length} new entries.`,
+      "ok"
+    );
+  } catch (err) {
+    setSettingsStatus(`Merge failed: ${err.message}`, "err");
+  } finally {
+    closeLibraryImportConfirm();
+    await renderLibraryPicker();
+  }
+});
+
+el("importReplace").addEventListener("click", async () => {
+  if (!pendingLibraryImport) return;
+  try {
+    await replaceAllEntries(pendingLibraryImport.entries);
+    setSettingsStatus(
+      `Replaced: now ${pendingLibraryImport.entries.length} entries.`,
+      "ok"
+    );
+  } catch (err) {
+    setSettingsStatus(`Replace failed: ${err.message}`, "err");
+  } finally {
+    closeLibraryImportConfirm();
+    await renderLibraryPicker();
+  }
+});
+
+el("importCancel").addEventListener("click", () => {
+  closeLibraryImportConfirm();
+  setSettingsStatus("Import cancelled.", "ok");
+});
+
+el("resetLibrary").addEventListener("click", async () => {
+  try {
+    await clearAll();
+    const result = await seedIfEmpty();
+    setSettingsStatus(`Reset to seeds (${result.count || 0} entries).`, "ok");
+    await renderLibraryPicker();
+  } catch (err) {
+    setSettingsStatus(`Reset failed: ${err.message}`, "err");
+  }
+});
 
 el("saveSettings").addEventListener("click", async () => {
   await setApiKeys({

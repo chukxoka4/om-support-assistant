@@ -12,8 +12,11 @@ import {
   clearAll,
   seedIfEmpty
 } from "./lib/library.js";
+import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 
 const el = (id) => document.getElementById(id);
+
+let pendingImport = null; // { entries, diff }
 
 async function init() {
   const keys = await getApiKeys();
@@ -60,6 +63,28 @@ function validateImportEntry(entry, idx) {
     throw new Error(`Entry ${idx}: missing dropdowns`);
   if (typeof entry.scenario_instruction !== "string" || !entry.scenario_instruction)
     throw new Error(`Entry ${idx}: missing scenario_instruction`);
+}
+
+function renderImportConfirm(diff) {
+  el("import-summary").innerHTML = `
+    File contains <b>${diff.incomingTotal}</b> entries.
+    You currently have <b>${diff.currentTotal}</b>.<br>
+    <b>${diff.toAdd.length}</b> new ·
+    <b>${diff.sameAsLocal.length}</b> already present (identical) ·
+    <b>${diff.conflicts.length}</b> already present but different.
+  `;
+  el("import-merge-hint").textContent =
+    `Merge new only: adds ${diff.toAdd.length} new entries. ` +
+    `Existing entries (and their scores) stay untouched.`;
+  el("import-replace-hint").textContent =
+    `Replace all: drops your current ${diff.currentTotal} entries and uses the ` +
+    `${diff.incomingTotal} from the file. Scores reset.`;
+  el("import-confirm").hidden = false;
+}
+
+function closeImportConfirm() {
+  el("import-confirm").hidden = true;
+  pendingImport = null;
 }
 
 el("save").addEventListener("click", async () => {
@@ -113,11 +138,55 @@ el("import-file").addEventListener("change", async (e) => {
     if (!Array.isArray(parsed.library))
       throw new Error("Missing library array");
     parsed.library.forEach(validateImportEntry);
-    await replaceAllEntries(parsed.library);
-    setLibraryStatus(`Imported ${parsed.library.length} entries.`);
+
+    const current = await getAllEntries();
+    const diff = diffImport(current, parsed.library);
+    pendingImport = { entries: parsed.library, diff };
+    renderImportConfirm(diff);
+    setLibraryStatus(`Loaded ${parsed.library.length} entries — confirm below.`);
   } catch (err) {
+    closeImportConfirm();
     setLibraryStatus(`Import failed: ${err.message}`, "err");
   }
+});
+
+el("import-merge").addEventListener("click", async () => {
+  if (!pendingImport) return;
+  try {
+    const current = await getAllEntries();
+    const merged = mergeNewOnly(
+      current.map(({ weighted_score, ...rest }) => rest),
+      pendingImport.entries
+    );
+    await replaceAllEntries(merged);
+    setLibraryStatus(
+      `Merged: added ${pendingImport.diff.toAdd.length} new entries. ` +
+        `${pendingImport.diff.sameAsLocal.length + pendingImport.diff.conflicts.length} kept.`
+    );
+  } catch (err) {
+    setLibraryStatus(`Merge failed: ${err.message}`, "err");
+  } finally {
+    closeImportConfirm();
+  }
+});
+
+el("import-replace").addEventListener("click", async () => {
+  if (!pendingImport) return;
+  try {
+    await replaceAllEntries(pendingImport.entries);
+    setLibraryStatus(
+      `Replaced: now ${pendingImport.entries.length} entries. Scores reset.`
+    );
+  } catch (err) {
+    setLibraryStatus(`Replace failed: ${err.message}`, "err");
+  } finally {
+    closeImportConfirm();
+  }
+});
+
+el("import-cancel").addEventListener("click", () => {
+  closeImportConfirm();
+  setLibraryStatus("Import cancelled.");
 });
 
 el("reset-library").addEventListener("click", async () => {
