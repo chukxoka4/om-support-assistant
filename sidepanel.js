@@ -13,6 +13,7 @@ import {
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
+import { showToast } from "./lib/toast.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
@@ -131,7 +132,7 @@ async function refreshProviderSelects() {
 let pendingLibraryImport = null; // { entries, diff }
 
 function setSettingsStatus(text, kind = "ok") {
-  setStatus(el("settingsStatus"), text, kind);
+  showToast("sidepanelToasts", text, kind);
 }
 
 function validateLibraryEntry(entry, idx) {

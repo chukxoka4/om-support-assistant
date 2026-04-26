@@ -18,9 +18,15 @@
     .import-confirm { margin-top: 14px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }
     .import-confirm__summary { font-size: 13px; line-height: 1.6; margin-bottom: 10px; }
     .import-confirm__summary b { font-weight: 600; }
+    .toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 9999; pointer-events: none; }
+    .toast { pointer-events: auto; min-width: 280px; max-width: 480px; padding: 10px 32px 10px 14px; border-radius: 6px; font-size: 13px; line-height: 1.4; box-shadow: 0 4px 14px rgba(0,0,0,0.18); position: relative; cursor: pointer; }
+    .toast--ok { background: #e6f4ea; color: #0a7c2f; border: 1px solid #a6dab2; }
+    .toast--err { background: #fce8e6; color: #b00020; border: 1px solid #f1b1ae; }
+    .toast__close { position: absolute; top: 6px; right: 8px; font-size: 16px; line-height: 1; opacity: 0.6; }
   </style>
 </head>
 <body>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
   <h1>OM Support Assistant — Options</h1>
 
   <h2>API Keys (all optional)</h2>

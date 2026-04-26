@@ -13,6 +13,7 @@ import {
   seedIfEmpty
 } from "./lib/library.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
+import { showToast } from "./lib/toast.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -47,9 +48,7 @@ async function refreshDefaultProviderOptions() {
 }
 
 function setLibraryStatus(text, kind = "ok") {
-  const node = el("library-status");
-  node.textContent = text;
-  node.style.color = kind === "err" ? "#b00020" : "#0a7c2f";
+  showToast("toasts", text, kind);
 }
 
 function validateImportEntry(entry, idx) {
