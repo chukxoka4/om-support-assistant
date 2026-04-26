@@ -55,7 +55,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["prompts/library.json", "prompts/om-seeds.json", "prompts/house-style.md", "prompts/products/*.md"],
+      "resources": ["prompts/om-seeds.json", "prompts/house-style.md", "prompts/products/*.md"],
       "matches": ["<all_urls>"]
     }
   ]

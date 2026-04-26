@@ -15,11 +15,12 @@ Entry points       background.js · content.js · sidepanel.js · options.js
 Services           lib/compose.js · lib/prompts.js · providers/index.js
 Repositories       lib/storage.js · lib/html.js · lib/ticket.js
 Infrastructure     providers/{gemini,claude,openai}.js
-Data               prompts/library.json · prompts/house-style.md · prompts/products/*.md
+Data               prompts/om-seeds.json · prompts/house-style.md · prompts/products/*.md
 ```
 
 Rules: entry points never call provider SDKs directly; they go through `providers/index.js`. DOM access lives in `lib/html.js` and `content.js`. `chrome.storage` access lives in `lib/storage.js`.
 
 ## Prompt library
 
-`prompts/library.json` is the shareable artifact. Export/import via the options page.
+The library lives in `chrome.storage.local` under `library_v3`, seeded once on
+install from `prompts/om-seeds.json`. Export/import via the options page.

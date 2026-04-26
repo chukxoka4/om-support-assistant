@@ -3,11 +3,8 @@ import {
   setApiKeys,
   getDefaultProvider,
   setDefaultProvider,
-  getAvailableProviders,
-  getLibraryOverride,
-  setLibraryOverride
+  getAvailableProviders
 } from "./lib/storage.js";
-import { getLibrary } from "./lib/prompts.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -53,39 +50,18 @@ el("save").addEventListener("click", async () => {
   setTimeout(() => (el("status").textContent = ""), 2000);
 });
 
-el("export").addEventListener("click", async () => {
-  const lib = await getLibrary();
-  const blob = new Blob([JSON.stringify(lib, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `om-assistant-library-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+// Library export / import / reset are being rewired against the v3 store
+// in bug A2. Until then these buttons are intentionally inert so the page
+// loads cleanly without the deleted v2 helpers.
+const pendingMsg = "Library actions are being rewired in bug A2.";
+el("export").addEventListener("click", () => {
+  el("library-status").textContent = pendingMsg;
 });
-
-el("import").addEventListener("click", () => el("import-file").click());
-
-el("import-file").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const parsed = JSON.parse(text);
-    if (!parsed.version || !Array.isArray(parsed.actions)) {
-      throw new Error("Invalid library shape: expected { version, actions: [] }");
-    }
-    await setLibraryOverride(parsed);
-    el("library-status").textContent = `Imported ${parsed.actions.length} action(s).`;
-  } catch (err) {
-    el("library-status").textContent = `Import failed: ${err.message}`;
-  }
+el("import").addEventListener("click", () => {
+  el("library-status").textContent = pendingMsg;
 });
-
-el("reset-library").addEventListener("click", async () => {
-  await setLibraryOverride(null);
-  await chrome.storage.local.remove("library_override");
-  el("library-status").textContent = "Reset to bundled default.";
+el("reset-library").addEventListener("click", () => {
+  el("library-status").textContent = pendingMsg;
 });
 
 init();
