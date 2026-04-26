@@ -1,0 +1,27 @@
+{
+  "name": "om-support-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.0",
+    "happy-dom": "^15.0.0",
+    "husky": "^9.1.0",
+    "lint-staged": "^15.2.0",
+    "vitest": "^2.1.0"
+  },
+  "lint-staged": {
+    "{lib,providers,mcp-intercom}/**/*.js": [
+      "node tools/check-tests-exist.js"
+    ],
+    "{sidepanel,options,background,content,content-overlay,content-ticket}.js": [
+      "node tools/check-tests-exist.js"
+    ]
+  }
+}
