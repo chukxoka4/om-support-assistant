@@ -12,6 +12,7 @@ import {
   getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
+import { proposeSuggestion } from "./lib/suggestions.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
@@ -862,7 +863,19 @@ async function saveManagerialRewrite(draft) {
     return;
   }
   await updateDraft(draft.id, { outcome: "managerial_rewrite", manager_rewrite_text: text });
-  if (draft.library_entry_id) await bumpScore(draft.library_entry_id, "manager_approved", 5);
+  if (draft.library_entry_id) {
+    await bumpScore(draft.library_entry_id, "manager_approved", 5);
+    // Fire-and-forget: ask the LLM to propose a library refinement based on
+    // what the manager actually changed. Surfaces in the suggestion review
+    // queue. Per lib/suggestions.js, this should not block the UI.
+    proposeSuggestion({
+      entryId: draft.library_entry_id,
+      draftId: draft.id,
+      userOutput: chosenAssistantReply(draft),
+      finalOutput: text,
+      trigger: "managerial_rewrite"
+    }).catch((e) => console.warn("proposeSuggestion failed:", e));
+  }
   setStatus(el("formStatus"), "Logged managerial rewrite (+5, same weight as manager approved).", "ok");
   state.revisitMgrRewriteDraftId = null;
   await focusAssistantPanel();
