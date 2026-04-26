@@ -740,39 +740,76 @@ async function openApplyPreview(node) {
   if (!entry) return;
   const suggestion = (entry.pending_suggestions || []).find((s) => s.id === sugId);
   if (!suggestion) return;
-  const change = (suggestion.ai_analysis?.proposed_changes || [])[0];
-  if (!change) {
+  const proposed = suggestion.ai_analysis?.proposed_changes || [];
+  if (!proposed.length) {
     showToast("sidepanelToasts", "Nothing to apply — no structural change proposed.", "err");
     return;
   }
 
-  let body = "";
-  if (change.type === "refine_instruction") {
-    body = `
+  // Group by type so the preview is readable when the LLM returns several.
+  const refines = proposed.filter((c) => c.type === "refine_instruction");
+  const taxAdds = proposed.filter((c) =>
+    c.type === "new_tone" || c.type === "new_audience" || c.type === "new_goal"
+  );
+  const splits = proposed.filter((c) => c.type === "split_entry");
+  const unknown = proposed.filter((c) =>
+    !["refine_instruction", "new_tone", "new_audience", "new_goal", "split_entry"].includes(c.type)
+  );
+
+  const blocks = [];
+
+  if (refines.length) {
+    const refineList = refines.map((c, i) => `
+      <div class="s-preview-text" style="background:#e6f4ea; margin-top:${i ? 4 : 0}px">
+        <strong>${i + 1}.</strong> ${escapeHtml(c.value || "")}
+        ${c.reason ? `<div class="meta" style="margin-top:2px">— ${escapeHtml(c.reason)}</div>` : ""}
+      </div>`).join("");
+    const lastWinsNote = refines.length > 1
+      ? `<div class="meta" style="margin-top:4px">Last refinement wins (#${refines.length} will become the live instruction). All ${refines.length} count toward rewrites_absorbed.</div>`
+      : "";
+    blocks.push(`
       <div class="s-preview-block">
         <div class="s-preview-label">Current instruction:</div>
         <div class="s-preview-text">${escapeHtml(entry.scenario_instruction || "")}</div>
       </div>
       <div class="s-preview-block">
-        <div class="s-preview-label">New instruction:</div>
-        <div class="s-preview-text" style="background:#e6f4ea">${escapeHtml(change.value || "")}</div>
-      </div>`;
-  } else if (change.type === "new_tone" || change.type === "new_audience" || change.type === "new_goal") {
-    const label = { new_tone: "tone", new_audience: "audience", new_goal: "goal" }[change.type];
-    body = `<div class="s-preview-block">Add new ${label} value: <strong>${escapeHtml(change.value || "")}</strong></div>`;
-  } else if (change.type === "split_entry") {
-    showToast("sidepanelToasts", "Split-entry suggestions need manual creation — accept it to flag for handoff.", "ok");
-    // Mark needs_manual instead of mutating.
-    const result = await applySuggestion(entryId, sugId);
-    if (result.status === "needs_manual") renderLibraryPanel();
-    return;
-  } else {
-    body = `<div class="s-preview-block">Unknown change type: ${escapeHtml(change.type)}</div>`;
+        <div class="s-preview-label">${refines.length > 1 ? `Proposed refinements (${refines.length})` : "New instruction"}:</div>
+        ${refineList}
+        ${lastWinsNote}
+      </div>`);
+  }
+
+  if (taxAdds.length) {
+    const items = taxAdds.map((c) => {
+      const label = { new_tone: "tone", new_audience: "audience", new_goal: "goal" }[c.type];
+      return `<li>Add ${label}: <strong>${escapeHtml(c.value || "")}</strong>${c.reason ? ` <span class="meta">— ${escapeHtml(c.reason)}</span>` : ""}</li>`;
+    }).join("");
+    blocks.push(`
+      <div class="s-preview-block">
+        <div class="s-preview-label">Taxonomy additions:</div>
+        <ul style="margin:4px 0 0 18px">${items}</ul>
+      </div>`);
+  }
+
+  if (splits.length) {
+    blocks.push(`
+      <div class="s-preview-block" style="color:#92400e">
+        <div class="s-preview-label">Split entry — manual handoff:</div>
+        <div>This suggestion proposes splitting into a new entry. Apply will flag it as <em>needs_manual</em> and you'll create the new entry by hand. Other changes above still apply.</div>
+      </div>`);
+  }
+
+  if (unknown.length) {
+    blocks.push(`
+      <div class="s-preview-block" style="color:#9a3412">
+        <div class="s-preview-label">Skipped (unknown type):</div>
+        <div>${escapeHtml(unknown.map((c) => c.type).join(", "))}</div>
+      </div>`);
   }
 
   preview.innerHTML = `
-    <div class="s-preview-header">Apply this change?</div>
-    ${body}
+    <div class="s-preview-header">Apply ${proposed.length === 1 ? "this change" : `these ${proposed.length} changes`}?</div>
+    ${blocks.join("")}
     <div class="s-actions">
       <button class="primary s-apply">Apply</button>
       <button class="s-cancel">Cancel</button>
@@ -782,8 +819,14 @@ async function openApplyPreview(node) {
 
   preview.querySelector(".s-apply").addEventListener("click", async () => {
     const result = await applySuggestion(entryId, sugId);
-    if (result.applied) {
-      showToast("sidepanelToasts", `Applied: ${result.type.replace(/_/g, " ")}.`, "ok");
+    if (result.applied > 0 && result.status === "needs_manual") {
+      showToast("sidepanelToasts",
+        `Applied ${result.applied} change${result.applied === 1 ? "" : "s"} · 1 flagged for manual handoff.`,
+        "ok");
+    } else if (result.applied > 0) {
+      showToast("sidepanelToasts",
+        `Applied ${result.applied} change${result.applied === 1 ? "" : "s"}.`,
+        "ok");
     } else if (result.status === "needs_manual") {
       showToast("sidepanelToasts", "Flagged for manual handoff.", "ok");
     } else {
