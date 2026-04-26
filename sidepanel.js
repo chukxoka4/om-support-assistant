@@ -10,6 +10,7 @@ import {
 import { computeMetrics } from "./lib/metrics.js";
 import {
   getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
+  applySuggestion,
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
 import { proposeSuggestion } from "./lib/suggestions.js";
@@ -655,29 +656,144 @@ async function renderSuggestionList() {
   }
   list.innerHTML = pending.map(({ entry, suggestion }) => {
     const a = suggestion.ai_analysis || {};
-    const changes = (a.proposed_changes || []).map((c) =>
+    const change = (a.proposed_changes || [])[0];
+    const changesHtml = (a.proposed_changes || []).map((c) =>
       `<div class="s-change">• <strong>${escapeHtml(c.type)}</strong> → ${escapeHtml(c.value || "")} <em style="color:#78716c">(${escapeHtml(c.reason || "")})</em></div>`
     ).join("");
-    return `
-      <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}">
-        <div class="s-head">${escapeHtml(entry.scenario_title)} — ${escapeHtml(a.summary || "no summary")}</div>
-        ${changes || '<div class="s-change" style="color:#78716c">No structural changes proposed.</div>'}
-        <div class="s-actions">
-          <button class="primary" data-res="accepted">Accept</button>
-          <button data-res="rejected">Reject</button>
-          <button data-res="deferred">Defer</button>
+
+    if (suggestion.status === "needs_manual") {
+      // split_entry handoff: no inline mutation possible, surface a "create new
+      // entry" affordance so the human authors it manually.
+      return `
+        <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}">
+          <div class="s-head">${escapeHtml(entry.scenario_title)} — Needs manual review</div>
+          <div class="s-change" style="color:#92400e">⚠ Proposal: split into a new entry. Reason: ${escapeHtml(change?.reason || "(none)")}.</div>
+          <div class="s-change">Suggested instruction:<br><em>${escapeHtml(change?.value || "")}</em></div>
+          <div class="s-actions">
+            <button class="primary" data-act="prefill">Open as new entry form</button>
+            <button data-act="dismiss">Dismiss</button>
+          </div>
         </div>
+      `;
+    }
+
+    return `
+      <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}" data-type="${escapeHtml(change?.type || "")}">
+        <div class="s-head">${escapeHtml(entry.scenario_title)} — ${escapeHtml(a.summary || "no summary")}</div>
+        ${changesHtml || '<div class="s-change" style="color:#78716c">No structural changes proposed.</div>'}
+        <div class="s-actions">
+          <button class="primary" data-act="accept">Accept</button>
+          <button data-act="reject">Reject</button>
+          <button data-act="defer">Defer</button>
+        </div>
+        <div class="s-preview" hidden></div>
       </div>
     `;
   }).join("");
 
   list.querySelectorAll(".suggestion").forEach((node) => {
-    node.querySelectorAll("button[data-res]").forEach((btn) => {
+    node.querySelectorAll("button[data-act]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        await resolveSuggestion(node.dataset.entry, node.dataset.sug, btn.dataset.res);
-        renderLibraryPanel();
+        const act = btn.dataset.act;
+        if (act === "reject") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "defer") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "deferred");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "dismiss") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "prefill") {
+          // Manual handoff for split_entry: scroll user to the library section
+          // so they can create the new entry by hand. Pre-filling a real form
+          // is a future feature; for now we resolve and surface a toast.
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          showToast("sidepanelToasts",
+            "Open the library list and add a new entry with the suggested instruction.",
+            "ok", 6000);
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "accept") {
+          await openApplyPreview(node);
+          return;
+        }
       });
     });
+  });
+}
+
+async function openApplyPreview(node) {
+  const entryId = node.dataset.entry;
+  const sugId = node.dataset.sug;
+  const preview = node.querySelector(".s-preview");
+  if (!preview) return;
+
+  const entry = await getEntry(entryId);
+  if (!entry) return;
+  const suggestion = (entry.pending_suggestions || []).find((s) => s.id === sugId);
+  if (!suggestion) return;
+  const change = (suggestion.ai_analysis?.proposed_changes || [])[0];
+  if (!change) {
+    showToast("sidepanelToasts", "Nothing to apply — no structural change proposed.", "err");
+    return;
+  }
+
+  let body = "";
+  if (change.type === "refine_instruction") {
+    body = `
+      <div class="s-preview-block">
+        <div class="s-preview-label">Current instruction:</div>
+        <div class="s-preview-text">${escapeHtml(entry.scenario_instruction || "")}</div>
+      </div>
+      <div class="s-preview-block">
+        <div class="s-preview-label">New instruction:</div>
+        <div class="s-preview-text" style="background:#e6f4ea">${escapeHtml(change.value || "")}</div>
+      </div>`;
+  } else if (change.type === "new_tone" || change.type === "new_audience" || change.type === "new_goal") {
+    const label = { new_tone: "tone", new_audience: "audience", new_goal: "goal" }[change.type];
+    body = `<div class="s-preview-block">Add new ${label} value: <strong>${escapeHtml(change.value || "")}</strong></div>`;
+  } else if (change.type === "split_entry") {
+    showToast("sidepanelToasts", "Split-entry suggestions need manual creation — accept it to flag for handoff.", "ok");
+    // Mark needs_manual instead of mutating.
+    const result = await applySuggestion(entryId, sugId);
+    if (result.status === "needs_manual") renderLibraryPanel();
+    return;
+  } else {
+    body = `<div class="s-preview-block">Unknown change type: ${escapeHtml(change.type)}</div>`;
+  }
+
+  preview.innerHTML = `
+    <div class="s-preview-header">Apply this change?</div>
+    ${body}
+    <div class="s-actions">
+      <button class="primary s-apply">Apply</button>
+      <button class="s-cancel">Cancel</button>
+    </div>
+  `;
+  preview.hidden = false;
+
+  preview.querySelector(".s-apply").addEventListener("click", async () => {
+    const result = await applySuggestion(entryId, sugId);
+    if (result.applied) {
+      showToast("sidepanelToasts", `Applied: ${result.type.replace(/_/g, " ")}.`, "ok");
+    } else if (result.status === "needs_manual") {
+      showToast("sidepanelToasts", "Flagged for manual handoff.", "ok");
+    } else {
+      showToast("sidepanelToasts", `Apply failed: ${result.error || "unknown"}`, "err");
+    }
+    renderLibraryPanel();
+  });
+  preview.querySelector(".s-cancel").addEventListener("click", () => {
+    preview.hidden = true;
+    preview.innerHTML = "";
   });
 }
 
