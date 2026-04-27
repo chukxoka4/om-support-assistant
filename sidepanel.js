@@ -5,8 +5,11 @@ import {
   getTaxonomy, addTaxonomyValue,
   getAllDrafts, updateDraft,
   getUnresolvedDeliveredByConversation,
-  draftIsRevisitPending
+  draftIsRevisitPending,
+  getRankerMode, setRankerMode
 } from "./lib/storage.js";
+import { rankLexical, rankLLM } from "./lib/library-rank.js";
+import { callLLM as providerCallLLM } from "./providers/index.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
   getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
@@ -340,6 +343,160 @@ el("libraryPick").addEventListener("change", async (e) => {
   meta.textContent = entry.scenario_summary;
 });
 
+// ---------- in-textarea suggestions strip (F1) ----------
+//
+// Watches the draft textarea + dropdowns. After ~600ms idle and ≥80 chars,
+// loads the library, runs the active ranker, renders up to 5 results.
+// "Use" applies the entry to the dropdown — reusing the existing handler.
+
+const SUGGESTION_DEBOUNCE_MS = 600;
+const SUGGESTION_MIN_CHARS = 80;
+let suggestionTimer = null;
+let lastSuggestionRunId = 0;
+
+// Most recent impression — what was on screen at the moment of Generate.
+// Logged into the draft record so we can compute later "ignored 5/5" rates.
+let lastImpressionIds = [];
+let lastImpressionMode = null;
+let lastClickedSuggestionId = null;
+
+function shouldHideStrip(values) {
+  if (!values.draft || values.draft.length < SUGGESTION_MIN_CHARS) return true;
+  if (values.libraryEntryId) return true;
+  if (el("output")?.innerHTML?.trim()) return true;
+  return false;
+}
+
+async function syncRankerToggleFromStorage() {
+  const mode = await getRankerMode();
+  for (const r of document.querySelectorAll('input[name="rankerMode"]')) {
+    r.checked = r.value === mode;
+  }
+  return mode;
+}
+
+function renderStripEmpty(text, kind = "ok") {
+  el("ssBody").innerHTML = `<div class="ss-empty${kind === "err" ? " is-error" : ""}">${escapeHtml(text)}</div>`;
+  el("ssFoot").textContent = "";
+  lastImpressionIds = [];
+}
+
+function renderStripRows(results, totalEntries) {
+  const rows = results.map(({ entry, score, reason }, i) => `
+    <div class="ss-row${i === 0 ? " is-top" : ""}" data-id="${escapeHtml(entry.id)}">
+      <div class="ss-star">${i === 0 ? "⭐" : "•"}</div>
+      <div class="ss-text">
+        <div class="ss-text-title">${escapeHtml(entry.scenario_title || "Untitled")}</div>
+        <div class="ss-text-summary">${escapeHtml(entry.scenario_summary || "")}</div>
+      </div>
+      <div class="ss-score" title="${escapeHtml(reason || "")}">${Math.round(score)}</div>
+      <button class="ss-use" data-use="${escapeHtml(entry.id)}">Use ▸</button>
+    </div>
+  `).join("");
+  el("ssBody").innerHTML = rows;
+  el("ssFoot").textContent = `${results.length} of ${totalEntries} entries`;
+  lastImpressionIds = results.map((r) => r.entry.id);
+
+  el("ssBody").querySelectorAll("button[data-use]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.use;
+      lastClickedSuggestionId = id;
+      const pick = el("libraryPick");
+      pick.value = id;
+      pick.dispatchEvent(new Event("change"));
+      // Hide strip — the user has chosen.
+      el("suggestionStrip").hidden = true;
+    });
+  });
+}
+
+async function runSuggestionRanker() {
+  const runId = ++lastSuggestionRunId;
+  const values = getFormValues();
+  if (shouldHideStrip(values)) {
+    el("suggestionStrip").hidden = true;
+    return;
+  }
+
+  const mode = await getRankerMode();
+  lastImpressionMode = mode;
+  el("suggestionStrip").hidden = false;
+  renderStripEmpty(mode === "llm" ? "Asking LLM ranker…" : "Ranking…");
+
+  const dropdowns = {
+    product: values.product,
+    goal: values.goal,
+    audience: values.audience,
+    tone: values.tone,
+    mode: values.mode,
+    concise: values.concise
+  };
+
+  let entries;
+  try {
+    entries = await getAllEntries();
+  } catch (e) {
+    if (runId !== lastSuggestionRunId) return;
+    renderStripEmpty(`Couldn't load library: ${e.message}`, "err");
+    return;
+  }
+  if (!entries.length) {
+    if (runId !== lastSuggestionRunId) return;
+    renderStripEmpty("Library is empty.");
+    return;
+  }
+
+  let results;
+  try {
+    results = mode === "llm"
+      ? await rankLLM(values.draft, dropdowns, entries, providerCallLLM)
+      : rankLexical(values.draft, dropdowns, entries);
+  } catch (e) {
+    if (runId !== lastSuggestionRunId) return;
+    el("ssBody").innerHTML = `
+      <div class="ss-empty is-error">
+        ⚠ ${escapeHtml(e.message)}
+        <div style="margin-top:6px"><button class="ss-use" id="ssRetry">Retry</button>
+        <button class="ss-use" id="ssFallbackLex">Use lexical</button></div>
+      </div>`;
+    el("ssBody").querySelector("#ssRetry")?.addEventListener("click", () => runSuggestionRanker());
+    el("ssBody").querySelector("#ssFallbackLex")?.addEventListener("click", async () => {
+      await setRankerMode("lexical");
+      await syncRankerToggleFromStorage();
+      runSuggestionRanker();
+    });
+    el("ssFoot").textContent = "";
+    return;
+  }
+
+  if (runId !== lastSuggestionRunId) return;
+  if (!results.length) {
+    renderStripEmpty("No close match — Generate will create a new entry.");
+    return;
+  }
+  renderStripRows(results, entries.length);
+}
+
+function scheduleSuggestions() {
+  clearTimeout(suggestionTimer);
+  suggestionTimer = setTimeout(runSuggestionRanker, SUGGESTION_DEBOUNCE_MS);
+}
+
+(async () => {
+  await syncRankerToggleFromStorage();
+})();
+
+el("draft").addEventListener("input", scheduleSuggestions);
+for (const id of ["product", "goal", "audience", "tone", "mode", "concise"]) {
+  el(id)?.addEventListener("change", scheduleSuggestions);
+}
+document.querySelectorAll('input[name="rankerMode"]').forEach((r) => {
+  r.addEventListener("change", async (e) => {
+    await setRankerMode(e.target.value);
+    runSuggestionRanker();
+  });
+});
+
 // ---------- incoming selection (cursor-aware append) ----------
 function applyIncomingSelection(sel) {
   if (!sel?.text) return;
@@ -389,11 +546,19 @@ el("generateBtn").addEventListener("click", async () => {
     return;
   }
   el("generateBtn").disabled = true;
+  el("suggestionStrip").hidden = true;
   el("output").innerHTML = '<div class="loading">Thinking…</div>';
   setStatus(el("formStatus"), "");
   try {
     const { conversationId, ticketUrl } = await getCurrentTicket();
-    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf });
+    const suggestionLog = lastImpressionIds.length
+      ? {
+          mode: lastImpressionMode,
+          impression_ids: [...lastImpressionIds],
+          clicked_id: lastClickedSuggestionId
+        }
+      : null;
+    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf, suggestionLog });
     if (result.error) {
       el("output").innerHTML = "";
       setStatus(el("formStatus"), result.error, "error");
@@ -405,6 +570,10 @@ el("generateBtn").addEventListener("click", async () => {
     state.rewriteOf = null;
     renderOutput(result.parsed, result.provider, result.librarySkipped);
     await renderLibraryPicker();
+    // Reset impression state — this generation has been logged.
+    lastImpressionIds = [];
+    lastImpressionMode = null;
+    lastClickedSuggestionId = null;
   } finally {
     el("generateBtn").disabled = false;
   }

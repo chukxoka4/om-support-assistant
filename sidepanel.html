@@ -270,6 +270,24 @@
     }
     .revisit .r-mgrrw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .parse-warn { background: #fef3c7; border: 1px solid #fde68a; color: #92400e; padding: 8px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+    .suggestion-strip { margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+    .suggestion-strip .ss-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .suggestion-strip .ss-title { font-weight: 600; color: var(--text); }
+    .suggestion-strip .ss-rankers { color: var(--muted); display: flex; gap: 8px; align-items: center; }
+    .suggestion-strip .ss-rankers label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+    .suggestion-strip .ss-body { padding: 4px 0; }
+    .suggestion-strip .ss-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #f3f4f6; }
+    .suggestion-strip .ss-row:last-child { border-bottom: none; }
+    .suggestion-strip .ss-row.is-top .ss-star { opacity: 1; }
+    .suggestion-strip .ss-star { width: 14px; opacity: 0.25; font-size: 12px; flex-shrink: 0; }
+    .suggestion-strip .ss-text { flex: 1; min-width: 0; }
+    .suggestion-strip .ss-text-title { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .suggestion-strip .ss-text-summary { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .suggestion-strip .ss-score { font-size: 10px; color: var(--muted); padding: 2px 5px; border: 1px solid var(--border); border-radius: 3px; flex-shrink: 0; }
+    .suggestion-strip .ss-use { font-size: 11px; padding: 4px 9px; flex-shrink: 0; }
+    .suggestion-strip .ss-empty { padding: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+    .suggestion-strip .ss-empty.is-error { color: #b00020; }
+    .suggestion-strip .ss-foot { padding: 6px 10px; border-top: 1px solid var(--border); }
     .toasts { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 9999; pointer-events: none; }
     .toast { pointer-events: auto; padding: 9px 28px 9px 12px; border-radius: 6px; font-size: 12px; line-height: 1.4; box-shadow: 0 3px 10px rgba(0,0,0,0.18); position: relative; cursor: pointer; }
     .toast--ok { background: #e6f4ea; color: #0a7c2f; border: 1px solid #a6dab2; }
@@ -389,6 +407,19 @@
   </div>
 
   <div id="revisitCard" style="display:none"></div>
+
+  <div id="suggestionStrip" class="suggestion-strip" hidden>
+    <div class="ss-header">
+      <span class="ss-title">Library suggestions</span>
+      <span class="ss-rankers">
+        Ranker:
+        <label><input type="radio" name="rankerMode" value="lexical" /> Lex</label>
+        <label><input type="radio" name="rankerMode" value="llm" /> LLM</label>
+      </span>
+    </div>
+    <div class="ss-body" id="ssBody"></div>
+    <div class="ss-foot meta" id="ssFoot"></div>
+  </div>
 
   <button id="generateBtn" class="primary full">Generate reply</button>
   <div style="height: 8px"></div>
