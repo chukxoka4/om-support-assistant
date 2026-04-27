@@ -9,6 +9,7 @@ Living planning docs. Read in order.
 3. **[03-FEATURES.md](03-FEATURES.md)** — new features. Each feature names the layer, files, and what to do.
 4. **[04-MOCKUPS.md](04-MOCKUPS.md)** — text mockups for visual review before any UI is built.
 5. **[05-TESTS.md](05-TESTS.md)** — test plan, framework choice, commit hooks.
+6. **[06-REVIEW-PLAN.md](06-REVIEW-PLAN.md)** — Q2/Q3 supervisor expectations, May 1 reporting pitch, two-week build plan, honest gaps.
 
 ## Rules of the road
 
