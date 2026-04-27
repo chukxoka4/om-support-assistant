@@ -33,6 +33,10 @@ import {
 import { proposeSuggestion } from "./lib/suggestions.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
+import { computeAuditMetrics } from "./lib/audit-metrics.js";
+import { parseWpsaJson } from "./lib/wpsa-schema.js";
+import { buildReportHtml } from "./lib/report-html.js";
+import { buildSlackSnippet } from "./lib/report-slack.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
@@ -956,6 +960,140 @@ function selectedCustomerContext() {
   if (!entry?.snapshot?.found) return null;
   return stringifySnapshot(entry.snapshot);
 }
+
+// ---------- audit / weekly report ----------
+
+el("auditToggle")?.addEventListener("click", () => {
+  const panel = el("auditPanel");
+  if (!panel) return;
+  const open = panel.style.display !== "none";
+  panel.style.display = open ? "none" : "block";
+  if (!open) refreshAuditLiveMetrics().catch(() => {});
+});
+
+let lastValidatedPersonal = null;
+let lastValidatedTeam = null;
+
+function setAuditStatus(id, text, kind = "ok") {
+  const node = el(id);
+  if (!node) return;
+  node.textContent = text;
+  node.className = `status ${kind === "err" ? "error" : "ok"}`;
+}
+
+el("auditPersonalJson")?.addEventListener("input", () => {
+  const raw = el("auditPersonalJson").value;
+  if (!raw.trim()) {
+    lastValidatedPersonal = null;
+    setAuditStatus("auditPersonalStatus", "");
+    return;
+  }
+  const r = parseWpsaJson(raw);
+  if (!r.ok) {
+    lastValidatedPersonal = null;
+    setAuditStatus("auditPersonalStatus", `✗ ${r.errors[0]}`, "err");
+  } else {
+    lastValidatedPersonal = r.normalised;
+    setAuditStatus("auditPersonalStatus", `✓ Parsed · ${r.normalised.totals.conversations} conversations`);
+  }
+});
+
+el("auditTeamJson")?.addEventListener("input", () => {
+  const raw = el("auditTeamJson").value;
+  if (!raw.trim()) {
+    lastValidatedTeam = null;
+    setAuditStatus("auditTeamStatus", "");
+    return;
+  }
+  const r = parseWpsaJson(raw);
+  if (!r.ok) {
+    lastValidatedTeam = null;
+    setAuditStatus("auditTeamStatus", `✗ ${r.errors[0]}`, "err");
+  } else {
+    lastValidatedTeam = r.normalised;
+    setAuditStatus("auditTeamStatus", `✓ Parsed · ${r.normalised.totals.conversations} conversations · ${r.normalised.frictionLeaderboard.length} friction items`);
+  }
+});
+
+async function refreshAuditLiveMetrics() {
+  const drafts = await getAllDrafts();
+  const library = await getAllEntries();
+  const metrics = computeAuditMetrics({ drafts, library });
+  const lib = metrics.library;
+  const sug = metrics.suggestions;
+  el("auditLiveMetrics").innerHTML = `
+    <ul style="margin: 4px 0 0 16px; padding: 0; line-height: 1.7;">
+      <li>Library: <strong>${lib.total}</strong> entries${lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : ""}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
+      <li>Suggestions resolved this week: <strong>${sug.totalResolvedThisWeek}</strong> (${sug.appliedThisWeek} applied · ${sug.rejectedThisWeek} rejected · ${sug.deferredThisWeek} deferred), <strong>${sug.pending}</strong> pending</li>
+      <li>Suggestion strip CTR: <strong>${metrics.suggestionCtr.ratePercent != null ? metrics.suggestionCtr.ratePercent + "%" : "—"}</strong>${metrics.suggestionCtr.total ? ` (${metrics.suggestionCtr.clicked}/${metrics.suggestionCtr.total})` : " (no impressions yet)"}</li>
+      <li>Customer-context coverage: <strong>${metrics.customerContext.ratePercent != null ? metrics.customerContext.ratePercent + "%" : "—"}</strong>${metrics.customerContext.total ? ` (${metrics.customerContext.withContext}/${metrics.customerContext.total} replies)` : ""}</li>
+      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(personal review pattern)</em></li>
+    </ul>`;
+  return metrics;
+}
+
+async function gatherReportInputs() {
+  const drafts = await getAllDrafts();
+  const library = await getAllEntries();
+  const audit = computeAuditMetrics({ drafts, library });
+  const ask = el("auditAsk")?.value || "";
+  return {
+    personalWpsa: lastValidatedPersonal,
+    teamWpsa: lastValidatedTeam,
+    audit,
+    ask
+  };
+}
+
+el("auditGenerate")?.addEventListener("click", async () => {
+  if (!lastValidatedPersonal && !lastValidatedTeam) {
+    setAuditStatus("auditGenerateStatus", "✗ Paste at least one valid WPSA JSON first.", "err");
+    return;
+  }
+  setAuditStatus("auditGenerateStatus", "Generating…");
+  try {
+    const inputs = await gatherReportInputs();
+    const html = buildReportHtml(inputs);
+    const slack = buildSlackSnippet(inputs);
+
+    const meta = inputs.teamWpsa?.meta || inputs.personalWpsa?.meta || {};
+    const stamp = (meta.weekEnd || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, "");
+    const filename = `weekly-support-insights-${stamp}.html`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    try {
+      await navigator.clipboard.writeText(slack);
+      setAuditStatus("auditGenerateStatus", `✓ Downloaded ${filename} · Slack snippet copied to clipboard`);
+      showToast("sidepanelToasts", "Report downloaded · Slack snippet copied", "ok", 6000);
+    } catch (clipErr) {
+      setAuditStatus("auditGenerateStatus", `✓ Downloaded ${filename} · Couldn't copy Slack snippet (use Copy Slack button)`, "err");
+    }
+  } catch (e) {
+    setAuditStatus("auditGenerateStatus", `✗ ${e.message}`, "err");
+  }
+});
+
+el("auditCopySlack")?.addEventListener("click", async () => {
+  try {
+    const inputs = await gatherReportInputs();
+    if (!inputs.personalWpsa && !inputs.teamWpsa && !inputs.audit) {
+      showToast("sidepanelToasts", "Nothing to copy yet.", "err");
+      return;
+    }
+    const slack = buildSlackSnippet(inputs);
+    await navigator.clipboard.writeText(slack);
+    showToast("sidepanelToasts", "Slack snippet copied", "ok");
+  } catch (e) {
+    showToast("sidepanelToasts", `Copy failed: ${e.message}`, "err");
+  }
+});
 
 // ---------- incoming selection (cursor-aware append) ----------
 function applyIncomingSelection(sel) {

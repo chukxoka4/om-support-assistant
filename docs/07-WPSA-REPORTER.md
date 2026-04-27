@@ -57,7 +57,27 @@ A prompt area where you can ask qualitative questions. Use it for:
 
 ---
 
-## The Friday 15-minute routine
+## The Friday workflow with the Audit tab
+
+The side panel's **Weekly audit & report** section accepts the WPSA AI's JSON
+output, computes the extension's own AI-loop metrics, and produces:
+- a self-contained HTML file (`weekly-support-insights-<date>.html`) you can attach in Slack or email,
+- a Slack-ready markdown snippet copied to your clipboard.
+
+Two-run workflow (sections 1 + 3 are both WPSA, different filter scopes):
+
+1. **In WPSA, filter to your tickets only.** Run the JSON prompt below with `meta.scope = "personal"` and `meta.agent = "<your name>"`. Paste the JSON into the **Personal** textarea.
+2. **Change the WPSA filter to the whole team.** Run the *same* JSON prompt with `meta.scope = "team"` and `meta.agent = "Team"`. Paste into the **Team** textarea.
+3. Optionally type a one-line "this week's ask" — the single concrete request to product / team.
+4. Click **Generate weekly report**. The HTML downloads. The Slack snippet is on your clipboard.
+5. Post the snippet in Slack and attach the HTML file.
+
+If you only run one prompt, run the **team-scope** version. Section 1 will
+gracefully say "no personal WPSA JSON provided" and the report still works.
+The team scope answers the supervisor's #1 question: *"What is the #1 thing
+slowing down customers this week?"*
+
+## The 15-minute legacy routine (without the Audit tab)
 
 In order. No tool-switching mid-flow.
 

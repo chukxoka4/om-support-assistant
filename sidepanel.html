@@ -508,6 +508,34 @@
   <div id="output" style="margin-top: 16px"></div>
   <div id="stepOneSlot" style="display: none"></div>
 
+  <button type="button" class="history-toggle" id="auditToggle">
+    <span>Weekly audit &amp; report</span>
+    <span>&#9662;</span>
+  </button>
+  <div id="auditPanel" class="card" style="display:none">
+    <h3 style="margin-top:0">Section 1 — My personal stats from WPSA</h3>
+    <p class="meta" style="margin-top:-4px">Run the WPSA prompt with the filter set to <em>my tickets only</em>, paste the JSON below.</p>
+    <textarea id="auditPersonalJson" rows="6" style="font-family: ui-monospace, monospace; font-size: 11px;" placeholder="Paste personal WPSA JSON here…"></textarea>
+    <div id="auditPersonalStatus" class="status"></div>
+
+    <h3>Section 2 — AI loop metrics (live, from this extension)</h3>
+    <div id="auditLiveMetrics" class="meta">Computed from your local <code>draft_log</code> + <code>library_v3</code>.</div>
+
+    <h3>Section 3 — Team customer insights</h3>
+    <p class="meta" style="margin-top:-4px">Run the WPSA prompt with the filter set to <em>the whole team</em>, paste below.</p>
+    <textarea id="auditTeamJson" rows="6" style="font-family: ui-monospace, monospace; font-size: 11px;" placeholder="Paste team WPSA JSON here…"></textarea>
+    <div id="auditTeamStatus" class="status"></div>
+
+    <h3>This week's ask (optional)</h3>
+    <input type="text" id="auditAsk" placeholder="One concrete request to product / team this week…" />
+
+    <div class="btn-row" style="margin-top:12px">
+      <button id="auditGenerate" class="primary">Generate weekly report</button>
+      <button id="auditCopySlack">Copy Slack snippet</button>
+    </div>
+    <div id="auditGenerateStatus" class="status"></div>
+  </div>
+
   <button type="button" class="history-toggle" id="libraryToggle">
     <span id="libraryToggleLabel">Library &amp; learning</span>
     <span>&#9662;</span>
