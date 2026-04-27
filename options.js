@@ -4,7 +4,9 @@ import {
   getDefaultProvider,
   setDefaultProvider,
   getAvailableProviders,
-  getAllDrafts
+  getAllDrafts,
+  getIntercomConfig,
+  setIntercomConfig
 } from "./lib/storage.js";
 import {
   getAllEntries,
@@ -14,6 +16,7 @@ import {
 } from "./lib/library.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
+import { makeIntercomClient } from "./lib/intercom-client.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -24,8 +27,42 @@ async function init() {
   el("gemini-key").value = keys.gemini || "";
   el("claude-key").value = keys.claude || "";
   el("openai-key").value = keys.openai || "";
+  const intercom = await getIntercomConfig();
+  el("intercom-key").value = intercom.apiKey || "";
   await refreshDefaultProviderOptions();
 }
+
+function setIntercomStatus(text, kind = "ok") {
+  const node = el("intercom-status");
+  node.textContent = text;
+  node.style.color = kind === "err" ? "#b00020" : "#0a7c2f";
+}
+
+el("save-intercom").addEventListener("click", async () => {
+  const apiKey = el("intercom-key").value.trim();
+  await setIntercomConfig({ apiKey });
+  showToast("toasts", apiKey ? "Intercom key saved." : "Intercom key cleared.", "ok");
+});
+
+el("test-intercom").addEventListener("click", async () => {
+  const apiKey = el("intercom-key").value.trim();
+  if (!apiKey) {
+    setIntercomStatus("Enter a key first.", "err");
+    return;
+  }
+  setIntercomStatus("Testing…", "ok");
+  try {
+    const client = makeIntercomClient({ apiKey });
+    // Hit /me — the lightest authenticated endpoint. Returns admin/workspace.
+    const me = await client.call("/me");
+    const appName = me?.app?.name || me?.name || "OK";
+    setIntercomStatus(`✓ Connected · ${appName}`, "ok");
+    showToast("toasts", `Intercom: connected (${appName}).`, "ok");
+  } catch (e) {
+    setIntercomStatus(`✗ ${e.message}`, "err");
+    showToast("toasts", `Intercom test failed: ${e.message}`, "err");
+  }
+});
 
 async function refreshDefaultProviderOptions() {
   const select = el("default-provider");
