@@ -403,7 +403,7 @@ el("generateBtn").addEventListener("click", async () => {
     state.lastParsed = result.parsed;
     state.lastLibraryEntryId = result.libraryEntryId;
     state.rewriteOf = null;
-    renderOutput(result.parsed, result.provider);
+    renderOutput(result.parsed, result.provider, result.librarySkipped);
     await renderLibraryPicker();
   } finally {
     el("generateBtn").disabled = false;
@@ -437,7 +437,7 @@ function plainToHtml(text) {
   }).join("");
 }
 
-function renderOutput(parsed, provider) {
+function renderOutput(parsed, provider, librarySkipped = null) {
   const section = (title, cls, text) => text ? `
     <div class="output-section">
       <h4>${title}</h4>
@@ -451,9 +451,13 @@ function renderOutput(parsed, provider) {
   const banner = parsed.wasParsed === false
     ? `<div class="parse-warn">⚠ Couldn't parse the model's labels — showing the raw response below. Try again or switch provider.</div>`
     : "";
+  const piiBanner = librarySkipped?.reason === "pii_detected"
+    ? `<div class="parse-warn">⚠ Library entry not auto-saved — possible PII detected (${librarySkipped.hits.join(", ")}). The two rewrites are still yours to use.</div>`
+    : "";
 
   el("output").innerHTML = `
     ${banner}
+    ${piiBanner}
     ${section("Reason", "reason", parsed.reason)}
     ${section("Version A — The Polish", "version-a", parsed.versionA)}
     ${section("Version B — The Revamp", "version-b", parsed.versionB)}
