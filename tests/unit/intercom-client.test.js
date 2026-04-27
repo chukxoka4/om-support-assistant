@@ -12,7 +12,9 @@ import {
   trialEndsInDays,
   daysSinceSec,
   extractTags,
-  emptySnapshot
+  emptySnapshot,
+  detectTimestamp,
+  formatTimestampMs
 } from "../../lib/intercom-client.js";
 
 const NOW = Date.now();
@@ -128,6 +130,39 @@ describe("pure helpers", () => {
     expect(daysSinceSec(0)).toBeNull();
     const tenDaysAgoSec = Math.floor((Date.now() - 10 * 24 * 3600 * 1000) / 1000);
     expect(daysSinceSec(tenDaysAgoSec)).toBe(10);
+  });
+
+  it("detectTimestamp identifies unix-seconds, unix-ms, and ISO strings", () => {
+    const sec = Math.floor(Date.now() / 1000);
+    const ms = Date.now();
+    expect(detectTimestamp("created_at", sec)?.source).toBe("seconds");
+    expect(detectTimestamp("created_at", ms)?.source).toBe("ms");
+    expect(detectTimestamp("signup_date", "2024-04-12")?.source).toBe("iso");
+    expect(detectTimestamp("signup_date", "2024-04-12T10:00:00Z")?.source).toBe("iso");
+  });
+
+  it("detectTimestamp picks up timey numbers even without a hint key", () => {
+    // Plain custom-attribute key, no _at suffix, but value is unix-seconds.
+    const sec = Math.floor(Date.now() / 1000);
+    expect(detectTimestamp("foo", sec)?.source).toBe("seconds");
+  });
+
+  it("detectTimestamp returns null for non-time strings and out-of-range numbers", () => {
+    expect(detectTimestamp("plan", "Pro")).toBeNull();
+    expect(detectTimestamp("count", 42)).toBeNull();
+    expect(detectTimestamp("created_at", null)).toBeNull();
+    expect(detectTimestamp("created_at", "")).toBeNull();
+    expect(detectTimestamp("created_at", "not-a-date")).toBeNull();
+  });
+
+  it("formatTimestampMs formats relative + ISO", () => {
+    const today = formatTimestampMs(Date.now());
+    expect(today).toMatch(/today · \d{4}-\d{2}-\d{2}/);
+    const past = formatTimestampMs(Date.now() - 5 * 24 * 3600 * 1000);
+    expect(past).toMatch(/^5d ago · /);
+    const future = formatTimestampMs(Date.now() + 7 * 24 * 3600 * 1000);
+    expect(future).toMatch(/^in 7d · /);
+    expect(formatTimestampMs(NaN)).toBe("");
   });
 });
 

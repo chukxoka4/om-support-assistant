@@ -9,7 +9,11 @@ import {
   getRankerMode, setRankerMode,
   getIntercomConfig, setIntercomConfig
 } from "./lib/storage.js";
-import { makeIntercomClient } from "./lib/intercom-client.js";
+import {
+  makeIntercomClient,
+  detectTimestamp,
+  formatTimestampMs
+} from "./lib/intercom-client.js";
 import {
   loadSnapshotsForEmails,
   classifyHealth,
@@ -607,6 +611,7 @@ const customerChip = {
   conversationId: null,
   emails: [],
   byEmail: new Map(), // email -> { snapshot, error, raw, classified }
+  manualEmails: new Set(), // emails added via the "Check another email" input
   selected: null,
   expanded: false,
   loadedConvAt: 0
@@ -637,9 +642,12 @@ function renderHealthChip() {
       const cls = [
         "hc-tab",
         em === customerChip.selected ? "is-active" : "",
-        entry?.error ? "has-error" : ""
+        entry?.error ? "has-error" : "",
+        customerChip.manualEmails.has(em) ? "is-manual" : ""
       ].filter(Boolean).join(" ");
-      return `<button type="button" class="${cls}" data-email="${escapeHtml(em)}" title="${escapeHtml(em)}">${escapeHtml(em)}</button>`;
+      const titleParts = [em];
+      if (customerChip.manualEmails.has(em)) titleParts.push("manually added");
+      return `<button type="button" class="${cls}" data-email="${escapeHtml(em)}" title="${escapeHtml(titleParts.join(" — "))}">${escapeHtml(em)}</button>`;
     }).join("");
     tabsEl.querySelectorAll("[data-email]").forEach((b) => {
       b.addEventListener("click", () => {
@@ -764,14 +772,23 @@ function renderChipBody(snap, email, reason) {
     sections.push(`<div class="hc-section"><div class="hc-section-title">Identity</div><div class="hc-meta-row">${idBits.join(" · ")}</div></div>`);
   }
 
-  // Custom attributes verbatim — the workspace-specific ones.
+  // Custom attributes verbatim — the workspace-specific ones. Timestamps
+  // are formatted to relative + ISO so raw unix values don't confuse.
   const custom = snap.customAttributes || {};
   const customKeys = Object.keys(custom).filter((k) => custom[k] !== null && custom[k] !== "" && custom[k] !== undefined);
   if (customKeys.length) {
     const rows = customKeys.map((k) => {
       let v = custom[k];
-      if (typeof v === "object") v = JSON.stringify(v).slice(0, 80);
-      return `<div class="hc-meta-row"><strong>${escapeHtml(k)}</strong>: ${escapeHtml(String(v))}</div>`;
+      const ts = detectTimestamp(k, v);
+      let displayed;
+      if (ts) {
+        displayed = formatTimestampMs(ts.ms);
+      } else if (typeof v === "object") {
+        displayed = JSON.stringify(v).slice(0, 120);
+      } else {
+        displayed = String(v);
+      }
+      return `<div class="hc-meta-row"><strong>${escapeHtml(k)}</strong>: ${escapeHtml(displayed)}</div>`;
     }).join("");
     sections.push(`<div class="hc-section"><div class="hc-section-title">Custom</div>${rows}</div>`);
   }
@@ -815,8 +832,15 @@ async function loadCustomerHealth({ force = false } = {}) {
   if (ticketChanged) {
     customerChip.conversationId = conversationId;
     customerChip.byEmail = new Map();
+    customerChip.manualEmails = new Set();
     customerChip.expanded = false;
     customerChip.selected = emails[0];
+  } else {
+    // Same ticket — preserve any previously-fetched manual emails alongside
+    // the page-detected ones so the Retry button doesn't drop them.
+    for (const em of customerChip.manualEmails) {
+      if (!emails.includes(em)) emails.push(em);
+    }
   }
   customerChip.emails = emails;
   if (!emails.includes(customerChip.selected)) customerChip.selected = emails[0];
@@ -857,6 +881,65 @@ el("hcRetry")?.addEventListener("click", () => {
   loadCustomerHealth({ force: true }).catch((e) => {
     showToast("sidepanelToasts", `Intercom retry failed: ${e.message}`, "err");
   });
+});
+
+async function checkManualEmail() {
+  const input = el("hcManualEmail");
+  const raw = (input?.value || "").trim();
+  if (!raw) return;
+  // Re-use the same regex used for ticket-page extraction.
+  const m = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(raw);
+  if (!m) {
+    showToast("sidepanelToasts", "That doesn't look like an email.", "err");
+    return;
+  }
+  const email = m[0];
+
+  // Make sure the chip is mounted even if no ticket is open.
+  let cfgKey = "";
+  try {
+    cfgKey = (await getIntercomConfig())?.apiKey || "";
+  } catch { /* ignore */ }
+  if (!cfgKey) {
+    showToast("sidepanelToasts", "Set an Intercom API key in Settings first.", "err");
+    return;
+  }
+
+  if (!customerChip.emails.includes(email)) customerChip.emails.push(email);
+  customerChip.manualEmails.add(email);
+  customerChip.selected = email;
+  customerChip.byEmail.set(email, { loading: true });
+  setChipHidden(false);
+  renderHealthChip();
+  input.value = "";
+
+  try {
+    const results = await loadSnapshotsForEmails([email], { force: true });
+    const r = results[0];
+    if (r.error) {
+      customerChip.byEmail.set(email, { snapshot: null, error: r.error });
+    } else {
+      customerChip.byEmail.set(email, { snapshot: r.snapshot, error: null });
+      console.log(`[OM/Intercom] (manual) ${email} →`, r.snapshot);
+      const customKeys = Object.keys(r.snapshot?.customAttributes || {});
+      if (customKeys.length) {
+        console.log(`[OM/Intercom] (manual) ${email} custom_attributes keys:`, customKeys);
+      }
+    }
+  } catch (e) {
+    customerChip.byEmail.set(email, { snapshot: null, error: e.message });
+  }
+  renderHealthChip();
+}
+
+el("hcManualGo")?.addEventListener("click", () => {
+  checkManualEmail();
+});
+el("hcManualEmail")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    checkManualEmail();
+  }
 });
 el("hcToggle")?.addEventListener("click", () => {
   customerChip.expanded = !customerChip.expanded;

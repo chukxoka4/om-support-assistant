@@ -294,6 +294,10 @@
     .health-chip .hc-section { margin-top: 10px; }
     .health-chip .hc-section:first-of-type { margin-top: 8px; }
     .health-chip .hc-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+    .health-chip .hc-manual { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); background: #fafafa; }
+    .health-chip .hc-manual input { flex: 1; padding: 5px 8px; font-size: 12px; }
+    .health-chip .hc-manual button { padding: 5px 10px; font-size: 12px; }
+    .health-chip .hc-tab.is-manual::before { content: "✎ "; color: var(--muted); }
     .suggestion-strip { margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
     .suggestion-strip .ss-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
     .suggestion-strip .ss-title { font-weight: 600; color: var(--text); }
@@ -356,6 +360,10 @@
       <button type="button" id="hcToggle" class="hc-icon" aria-expanded="false" title="Show details">▾</button>
     </div>
     <div class="hc-body" id="hcBody" hidden></div>
+    <div class="hc-manual">
+      <input type="email" id="hcManualEmail" placeholder="Check another email…" autocomplete="off" />
+      <button type="button" id="hcManualGo" class="primary">Check</button>
+    </div>
   </div>
 
   <button type="button" id="toggleSettings" class="settings-toggle">&#9881; Settings</button>
