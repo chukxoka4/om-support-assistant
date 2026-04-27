@@ -6,8 +6,10 @@ import {
   getAllDrafts, updateDraft,
   getUnresolvedDeliveredByConversation,
   draftIsRevisitPending,
-  getRankerMode, setRankerMode
+  getRankerMode, setRankerMode,
+  getIntercomConfig, setIntercomConfig
 } from "./lib/storage.js";
+import { makeIntercomClient } from "./lib/intercom-client.js";
 import { rankLexical, rankLLM } from "./lib/library-rank.js";
 import { callLLM as providerCallLLM } from "./providers/index.js";
 import { computeMetrics } from "./lib/metrics.js";
@@ -100,6 +102,8 @@ async function loadSettings() {
   el("geminiKey").value = keys.gemini || "";
   el("claudeKey").value = keys.claude || "";
   el("openaiKey").value = keys.openai || "";
+  const intercom = await getIntercomConfig();
+  if (el("intercomKey")) el("intercomKey").value = intercom.apiKey || "";
   await refreshProviderSelects();
 }
 
@@ -271,6 +275,23 @@ el("resetLibrary").addEventListener("click", async () => {
   }
 });
 
+el("testIntercom")?.addEventListener("click", async () => {
+  const apiKey = el("intercomKey")?.value?.trim() || "";
+  if (!apiKey) {
+    showToast("sidepanelToasts", "Enter an Intercom key first.", "err");
+    return;
+  }
+  showToast("sidepanelToasts", "Testing Intercom…", "ok");
+  try {
+    const client = makeIntercomClient({ apiKey });
+    const me = await client.call("/me");
+    const appName = me?.app?.name || me?.name || "OK";
+    showToast("sidepanelToasts", `Intercom connected (${appName}).`, "ok");
+  } catch (e) {
+    showToast("sidepanelToasts", `Intercom test failed: ${e.message}`, "err");
+  }
+});
+
 el("saveSettings").addEventListener("click", async () => {
   await setApiKeys({
     gemini: el("geminiKey").value.trim(),
@@ -279,6 +300,8 @@ el("saveSettings").addEventListener("click", async () => {
   });
   const chosen = el("defaultProvider").value;
   if (chosen && chosen !== "— no providers configured —") await setDefaultProvider(chosen);
+  const intercomKey = el("intercomKey")?.value?.trim() || "";
+  await setIntercomConfig({ apiKey: intercomKey });
   await refreshProviderSelects();
   setStatus(el("settingsStatus"), "Saved.", "ok");
   setTimeout(() => setStatus(el("settingsStatus"), ""), 1500);

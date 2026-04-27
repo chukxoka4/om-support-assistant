@@ -341,7 +341,15 @@
       <label for="defaultProvider">Default provider</label>
       <select id="defaultProvider"></select>
     </div>
+    <div class="field">
+      <label for="intercomKey">Intercom API key</label>
+      <input type="password" id="intercomKey" autocomplete="off" placeholder="dG9rOj..." />
+      <div class="meta">Used for the customer health chip on ticket pages. US workspace only.</div>
+    </div>
     <div class="btn-row">
+      <button id="testIntercom">Test Intercom</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
       <button id="saveSettings" class="primary">Save</button>
       <button id="exportLibrary">Export library</button>
       <button id="importLibrary">Import library…</button>
