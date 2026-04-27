@@ -685,50 +685,108 @@ function renderHealthChip() {
   const snap = entry.snapshot;
   if (!snap) { root.hidden = true; return; }
 
-  const cls = classifyHealth(snap);
-  dotEl.textContent = HEALTH_DOTS[cls] || "⚪";
-  labelEl.textContent = HEALTH_LABELS[cls] || "Unknown";
+  const { tier, reason } = classifyHealth(snap);
+  dotEl.textContent = HEALTH_DOTS[tier] || "⚪";
+  labelEl.textContent = HEALTH_LABELS[tier] || "Unknown";
+  // Tooltip on the dot surfaces the reason without expanding.
+  dotEl.title = reason || "";
+  labelEl.title = reason || "";
 
   const summaryParts = [];
   if (snap.plan) summaryParts.push(snap.plan);
-  if (typeof snap.tenureDays === "number") summaryParts.push(`${snap.tenureDays}d`);
-  if (snap.conversationsLast90d != null) summaryParts.push(`${snap.conversationsLast90d} in 90d`);
-  if (typeof snap.npsScore === "number") summaryParts.push(`NPS ${snap.npsScore}`);
+  if (snap.subscriptionStatus) summaryParts.push(snap.subscriptionStatus);
+  if (typeof snap.lastSeenDays === "number") summaryParts.push(`seen ${snap.lastSeenDays}d`);
   if (!snap.found) summaryParts.unshift(`${selected} — no record`);
   summaryEl.textContent = summaryParts.join(" · ") || selected;
 
   if (customerChip.expanded) {
     bodyEl.hidden = false;
-    bodyEl.innerHTML = renderChipBody(snap, selected);
+    bodyEl.innerHTML = renderChipBody(snap, selected, reason);
   } else {
     bodyEl.hidden = true;
   }
 }
 
-function renderChipBody(snap, email) {
+function renderChipBody(snap, email, reason) {
   if (!snap?.found) {
     return `<div class="hc-meta-row">No Intercom record for <strong>${escapeHtml(email)}</strong>.</div>`;
   }
-  const lines = [];
-  const top = [];
-  if (snap.plan) top.push(`<strong>${escapeHtml(snap.plan)}</strong>`);
-  if (typeof snap.tenureDays === "number") top.push(`${snap.tenureDays} days tenure`);
-  if (typeof snap.lastSeenDays === "number") top.push(`last seen ${snap.lastSeenDays}d ago`);
-  if (top.length) lines.push(`<div class="hc-meta-row">${top.join(" · ")}</div>`);
+  const sections = [];
 
-  const second = [];
-  second.push(`${snap.conversationsLast90d || 0} conversations · ${snap.openConversations || 0} open`);
-  if (typeof snap.npsScore === "number") second.push(`NPS ${snap.npsScore}`);
-  if ((snap.tags || []).length) second.push(`tags: ${snap.tags.join(", ")}`);
-  lines.push(`<div class="hc-meta-row">${escapeHtml(second.join(" · "))}</div>`);
+  // Why summary at the very top.
+  if (reason) {
+    sections.push(`<div class="hc-meta-row hc-why"><strong>Why:</strong> ${escapeHtml(reason)}</div>`);
+  }
 
+  // Subscription
+  const subBits = [];
+  if (snap.plan) subBits.push(`Plan: <strong>${escapeHtml(snap.plan)}</strong>`);
+  if (snap.subscriptionStatus) subBits.push(`Status: <strong>${escapeHtml(snap.subscriptionStatus)}</strong>`);
+  if (typeof snap.tenureDays === "number") subBits.push(`Tenure: ${snap.tenureDays}d`);
+  if (typeof snap.mrr === "number") subBits.push(`MRR: ${snap.mrr}`);
+  if (typeof snap.trialEndsInDays === "number") {
+    const phrase = snap.trialEndsInDays >= 0
+      ? `Trial ends in ${snap.trialEndsInDays}d`
+      : `Trial expired ${Math.abs(snap.trialEndsInDays)}d ago`;
+    subBits.push(phrase);
+  }
+  if (subBits.length) {
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Subscription</div><div class="hc-meta-row">${subBits.join(" · ")}</div></div>`);
+  }
+
+  // Engagement
+  const engBits = [];
+  if (typeof snap.lastSeenDays === "number") engBits.push(`Last seen: ${snap.lastSeenDays}d ago`);
+  if (typeof snap.sessionCount === "number") engBits.push(`Sessions: ${snap.sessionCount}`);
+  if (typeof snap.lastEmailOpenDays === "number") engBits.push(`Email opened: ${snap.lastEmailOpenDays}d`);
+  if (typeof snap.lastEmailClickDays === "number") engBits.push(`Email clicked: ${snap.lastEmailClickDays}d`);
+  const flagBits = [];
+  if (snap.unsubscribedFromEmails) flagBits.push("unsubscribed");
+  if (snap.hasHardBounced) flagBits.push("hard-bounced");
+  if (engBits.length || flagBits.length) {
+    let row = engBits.join(" · ");
+    if (flagBits.length) row += `${row ? " · " : ""}<strong>${flagBits.join(" · ")}</strong>`;
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Engagement</div><div class="hc-meta-row">${row}</div></div>`);
+  }
+
+  // Identity
+  const idBits = [];
+  if (snap.name) idBits.push(`Name: <strong>${escapeHtml(snap.name)}</strong>`);
+  if (snap.companyName) {
+    const seats = typeof snap.companySeats === "number" ? ` (${snap.companySeats})` : "";
+    idBits.push(`Company: ${escapeHtml(snap.companyName)}${seats}`);
+  }
+  if (snap.location) idBits.push(`Location: ${escapeHtml(snap.location)}`);
+  if (snap.language) idBits.push(`Language: ${escapeHtml(snap.language)}`);
+  if ((snap.tags || []).length) idBits.push(`Tags: ${snap.tags.map(escapeHtml).join(", ")}`);
+  if (typeof snap.npsScore === "number") idBits.push(`NPS: ${snap.npsScore}`);
+  if (idBits.length) {
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Identity</div><div class="hc-meta-row">${idBits.join(" · ")}</div></div>`);
+  }
+
+  // Custom attributes verbatim — the workspace-specific ones.
+  const custom = snap.customAttributes || {};
+  const customKeys = Object.keys(custom).filter((k) => custom[k] !== null && custom[k] !== "" && custom[k] !== undefined);
+  if (customKeys.length) {
+    const rows = customKeys.map((k) => {
+      let v = custom[k];
+      if (typeof v === "object") v = JSON.stringify(v).slice(0, 80);
+      return `<div class="hc-meta-row"><strong>${escapeHtml(k)}</strong>: ${escapeHtml(String(v))}</div>`;
+    }).join("");
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Custom</div>${rows}</div>`);
+  }
+
+  // Recent topics — only if we actually got conversations from Intercom
+  // (probably never for OM workspace, but keep the section for forward
+  // compatibility).
   if ((snap.recentSummaries || []).length) {
     const items = snap.recentSummaries.map((s) =>
       `<div class="hc-recent-item">• ${escapeHtml(s.title || "(no subject)")}</div>`
     ).join("");
-    lines.push(`<div class="hc-recent"><div class="hc-recent-title">Recent topics</div>${items}</div>`);
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Recent topics</div>${items}</div>`);
   }
-  return lines.join("");
+
+  return sections.join("");
 }
 
 async function loadCustomerHealth({ force = false } = {}) {
@@ -779,9 +837,16 @@ async function loadCustomerHealth({ force = false } = {}) {
       customerChip.byEmail.set(r.email, { snapshot: null, error: r.error });
     } else {
       customerChip.byEmail.set(r.email, { snapshot: r.snapshot, error: null });
-      // One-time diagnostic log of the raw response when first fetched.
+      // One-time diagnostic log: the full snapshot AND the custom_attribute
+      // keys verbatim, so the user can see exactly what their workspace
+      // stores and we can adjust the field probing list if needed.
       if (force || ticketChanged) {
-        console.log(`[OM/Intercom] ${r.email} →`, r.snapshot);
+        const snap = r.snapshot;
+        console.log(`[OM/Intercom] ${r.email} →`, snap);
+        const customKeys = Object.keys(snap?.customAttributes || {});
+        if (customKeys.length) {
+          console.log(`[OM/Intercom] ${r.email} custom_attributes keys:`, customKeys);
+        }
       }
     }
   }

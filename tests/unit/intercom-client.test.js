@@ -6,6 +6,11 @@ import {
   tenureDays,
   lastSeenDays,
   pickNps,
+  pickPlan,
+  pickSubscriptionStatus,
+  pickMrr,
+  trialEndsInDays,
+  daysSinceSec,
   extractTags,
   emptySnapshot
 } from "../../lib/intercom-client.js";
@@ -79,6 +84,50 @@ describe("pure helpers", () => {
     expect(s.tags).toEqual([]);
     expect(s.recentSummaries).toEqual([]);
     expect(s.raw).toBeNull();
+    expect(s.customAttributes).toEqual({});
+    expect(s.subscriptionStatus).toBeNull();
+    expect(s.companyName).toBeNull();
+  });
+
+  it("pickPlan probes user_level → plan → plan_name → subscription_plan", () => {
+    expect(pickPlan({ user_level: "Pro" })).toBe("Pro");
+    expect(pickPlan({ plan: "Growth" })).toBe("Growth");
+    expect(pickPlan({ plan_name: "Pro+" })).toBe("Pro+");
+    expect(pickPlan({ subscription_plan: "Free" })).toBe("Free");
+    expect(pickPlan({ user_level: "Pro", plan: "ignored" })).toBe("Pro");
+    expect(pickPlan({})).toBeNull();
+    expect(pickPlan(null)).toBeNull();
+    expect(pickPlan({ user_level: "  " })).toBeNull();
+  });
+
+  it("pickSubscriptionStatus probes subscription_status → status → subscription_state", () => {
+    expect(pickSubscriptionStatus({ subscription_status: "active" })).toBe("active");
+    expect(pickSubscriptionStatus({ status: "cancelled" })).toBe("cancelled");
+    expect(pickSubscriptionStatus({})).toBeNull();
+  });
+
+  it("pickMrr accepts numbers and numeric strings, including negatives", () => {
+    expect(pickMrr({ mrr: 49 })).toBe(49);
+    expect(pickMrr({ monthly_revenue: "29.5" })).toBe(29.5);
+    expect(pickMrr({ plan_value: "-10" })).toBe(-10);
+    expect(pickMrr({})).toBeNull();
+    expect(pickMrr({ mrr: "n/a" })).toBeNull();
+  });
+
+  it("trialEndsInDays handles unix-seconds, unix-ms, ISO strings", () => {
+    const sevenDaysAheadSec = Math.floor((Date.now() + 7 * 24 * 3600 * 1000) / 1000);
+    expect(trialEndsInDays({ trial_ends_at: sevenDaysAheadSec })).toBe(7);
+    expect(trialEndsInDays({ trial_end: Date.now() + 3 * 24 * 3600 * 1000 })).toBe(3);
+    expect(trialEndsInDays({ trial_expires_at: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString() })).toBe(-2);
+    expect(trialEndsInDays({})).toBeNull();
+    expect(trialEndsInDays(null)).toBeNull();
+  });
+
+  it("daysSinceSec returns null for missing", () => {
+    expect(daysSinceSec(null)).toBeNull();
+    expect(daysSinceSec(0)).toBeNull();
+    const tenDaysAgoSec = Math.floor((Date.now() - 10 * 24 * 3600 * 1000) / 1000);
+    expect(daysSinceSec(tenDaysAgoSec)).toBe(10);
   });
 });
 
@@ -133,47 +182,65 @@ describe("findContactByEmail", () => {
 });
 
 describe("getCustomerSnapshot", () => {
-  it("happy path: maps custom attributes, tenure, last seen, conversations, NPS, tags", async () => {
+  it("happy path: maps engagement signals, subscription, identity, tags", async () => {
     const fetchImpl = fakeFetch({
       "POST /contacts/search": () => ({
         data: [{
           id: "c-1",
           email: "jane@acme.com",
-          created_at: SEC(412 * 24 * 3600 * 1000),    // 412 days ago
-          last_seen_at: SEC(3 * 24 * 3600 * 1000),    // 3 days ago
-          custom_attributes: { user_level: "Pro", nps_score: 6 },
-          tags: { data: [{ name: "trial-extended" }] }
+          name: "Jane",
+          created_at: SEC(412 * 24 * 3600 * 1000),
+          last_seen_at: SEC(3 * 24 * 3600 * 1000),
+          last_request_at: SEC(2 * 24 * 3600 * 1000),
+          session_count: 84,
+          last_email_opened_at: SEC(8 * 24 * 3600 * 1000),
+          last_email_clicked_at: SEC(12 * 24 * 3600 * 1000),
+          unsubscribed_from_emails: false,
+          has_hard_bounced: false,
+          language_override: "de",
+          location: { country: "Germany", region: "Berlin", city: "Berlin" },
+          custom_attributes: {
+            user_level: "Pro",
+            subscription_status: "active",
+            mrr: 49,
+            nps_score: 8,
+            has_wordpress_site: true
+          },
+          tags: { data: [{ name: "advocate" }] }
         }]
       }),
-      "POST /conversations/search": () => ({
-        conversations: [
-          { id: "conv-1", state: "open", created_at: SEC(3 * 24 * 3600 * 1000),
-            title: "Integration broken", source: { body: "<p>It stopped working</p>" } },
-          { id: "conv-2", state: "closed", created_at: SEC(12 * 24 * 3600 * 1000),
-            title: "Billing q", source: { body: "" } },
-          { id: "conv-3", state: "closed", created_at: SEC(28 * 24 * 3600 * 1000),
-            title: "Refund", source: { body: "" } },
-          { id: "conv-4", state: "closed", created_at: SEC(60 * 24 * 3600 * 1000),
-            title: "Account access", source: { body: "" } }
-        ]
-      })
+      "POST /conversations/search": () => ({ conversations: [] }),
+      "GET /contacts/c-1/companies": () => ({ data: [{ name: "Acme", user_count: 5 }] })
     });
     const c = makeIntercomClient({ apiKey: "x", fetchImpl });
     const snap = await c.getCustomerSnapshot("jane@acme.com");
     expect(snap.found).toBe(true);
-    expect(snap.email).toBe("jane@acme.com");
+    expect(snap.name).toBe("Jane");
     expect(snap.plan).toBe("Pro");
+    expect(snap.subscriptionStatus).toBe("active");
+    expect(snap.mrr).toBe(49);
     expect(snap.tenureDays).toBe(412);
     expect(snap.lastSeenDays).toBe(3);
-    expect(snap.openConversations).toBe(1);
-    expect(snap.conversationsLast90d).toBe(4);
-    expect(snap.npsScore).toBe(6);
-    expect(snap.tags).toEqual(["trial-extended"]);
-    expect(snap.recentSummaries).toHaveLength(3);
-    // Sorted newest first.
-    expect(snap.recentSummaries[0].title).toBe("Integration broken");
-    // Body HTML stripped.
-    expect(snap.recentSummaries[0].summary).toBe("It stopped working");
+    expect(snap.lastRequestDays).toBe(2);
+    expect(snap.sessionCount).toBe(84);
+    expect(snap.lastEmailOpenDays).toBe(8);
+    expect(snap.lastEmailClickDays).toBe(12);
+    expect(snap.unsubscribedFromEmails).toBe(false);
+    expect(snap.hasHardBounced).toBe(false);
+    expect(snap.language).toBe("de");
+    expect(snap.location).toBe("Berlin, Berlin, Germany");
+    expect(snap.npsScore).toBe(8);
+    expect(snap.tags).toEqual(["advocate"]);
+    expect(snap.companyName).toBe("Acme");
+    expect(snap.companySeats).toBe(5);
+    expect(snap.customAttributes).toEqual({
+      user_level: "Pro",
+      subscription_status: "active",
+      mrr: 49,
+      nps_score: 8,
+      has_wordpress_site: true
+    });
+    expect(snap.conversationsLast90d).toBe(0);
   });
 
   it("falls back to plan attribute when user_level missing", async () => {
@@ -181,7 +248,8 @@ describe("getCustomerSnapshot", () => {
       "POST /contacts/search": () => ({
         data: [{ id: "c", email: "x@y.co", custom_attributes: { plan: "Growth" } }]
       }),
-      "POST /conversations/search": () => ({ conversations: [] })
+      "POST /conversations/search": () => ({ conversations: [] }),
+      "GET /contacts/c/companies": () => ({ data: [] })
     });
     const c = makeIntercomClient({ apiKey: "x", fetchImpl });
     const snap = await c.getCustomerSnapshot("x@y.co");
@@ -204,7 +272,8 @@ describe("getCustomerSnapshot", () => {
       "POST /contacts/search": () => ({
         data: [{ id: "c", email: "x@y.co", custom_attributes: { user_level: "Free" } }]
       }),
-      "POST /conversations/search": () => ({ __error: true, status: 403, body: "Forbidden" })
+      "POST /conversations/search": () => ({ __error: true, status: 403, body: "Forbidden" }),
+      "GET /contacts/c/companies": () => ({ data: [] })
     });
     const c = makeIntercomClient({ apiKey: "x", fetchImpl });
     const snap = await c.getCustomerSnapshot("x@y.co");
@@ -213,6 +282,20 @@ describe("getCustomerSnapshot", () => {
     expect(snap.openConversations).toBe(0);
     expect(snap.conversationsLast90d).toBe(0);
     expect(snap.recentSummaries).toEqual([]);
+  });
+
+  it("companies endpoint failure leaves company fields null without throwing", async () => {
+    const fetchImpl = fakeFetch({
+      "POST /contacts/search": () => ({
+        data: [{ id: "c", email: "x@y.co", custom_attributes: {} }]
+      }),
+      "POST /conversations/search": () => ({ conversations: [] }),
+      "GET /contacts/c/companies": () => ({ __error: true, status: 403, body: "Forbidden" })
+    });
+    const c = makeIntercomClient({ apiKey: "x", fetchImpl });
+    const snap = await c.getCustomerSnapshot("x@y.co");
+    expect(snap.companyName).toBeNull();
+    expect(snap.companySeats).toBeNull();
   });
 });
 
