@@ -270,6 +270,25 @@
     }
     .revisit .r-mgrrw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .parse-warn { background: #fef3c7; border: 1px solid #fde68a; color: #92400e; padding: 8px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+    .health-chip { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12px; }
+    .health-chip .hc-tabs { display: flex; gap: 0; padding: 4px 6px 0; border-bottom: 1px solid var(--border); }
+    .health-chip .hc-tab { padding: 5px 8px; font-size: 11px; cursor: pointer; border: none; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .health-chip .hc-tab.is-active { color: var(--text); border-bottom-color: var(--primary); }
+    .health-chip .hc-tab.has-error { color: var(--danger); }
+    .health-chip .hc-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+    .health-chip .hc-dot { font-size: 14px; }
+    .health-chip .hc-label { font-weight: 600; color: var(--text); flex-shrink: 0; }
+    .health-chip .hc-summary { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .health-chip .hc-icon { padding: 2px 6px; font-size: 11px; line-height: 1; background: transparent; border: 1px solid transparent; color: var(--muted); }
+    .health-chip .hc-icon:hover { background: #f3f4f6; color: var(--text); border-color: var(--border); }
+    .health-chip .hc-body { padding: 0 10px 10px; border-top: 1px dashed #e5e7eb; }
+    .health-chip .hc-meta-row { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    .health-chip .hc-meta-row strong { color: var(--text); font-weight: 600; }
+    .health-chip .hc-recent { margin-top: 8px; }
+    .health-chip .hc-recent-title { font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .health-chip .hc-recent-item { font-size: 11px; color: var(--muted); padding: 3px 0; }
+    .health-chip.is-error .hc-label { color: var(--danger); }
+    .health-chip.is-error .hc-summary { color: var(--danger); }
     .suggestion-strip { margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
     .suggestion-strip .ss-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
     .suggestion-strip .ss-title { font-weight: 600; color: var(--text); }
@@ -321,6 +340,18 @@
 </head>
 <body>
   <div id="sidepanelToasts" class="toasts" aria-live="polite"></div>
+
+  <div id="customerHealth" class="health-chip" hidden>
+    <div class="hc-tabs" id="hcTabs" hidden></div>
+    <div class="hc-header">
+      <span class="hc-dot" id="hcDot">⚪</span>
+      <span class="hc-label" id="hcLabel">Loading…</span>
+      <span class="hc-summary" id="hcSummary"></span>
+      <button type="button" id="hcRetry" class="hc-icon" title="Refresh">↻</button>
+      <button type="button" id="hcToggle" class="hc-icon" aria-expanded="false" title="Show details">▾</button>
+    </div>
+    <div class="hc-body" id="hcBody" hidden></div>
+  </div>
 
   <button type="button" id="toggleSettings" class="settings-toggle">&#9881; Settings</button>
 

@@ -10,6 +10,14 @@ import {
   getIntercomConfig, setIntercomConfig
 } from "./lib/storage.js";
 import { makeIntercomClient } from "./lib/intercom-client.js";
+import {
+  loadSnapshotsForEmails,
+  classifyHealth,
+  HEALTH_LABELS,
+  HEALTH_DOTS,
+  stringifySnapshot
+} from "./lib/intercom-snapshot.js";
+import { getCustomerEmailsFromPage } from "./lib/ticket.js";
 import { rankLexical, rankLLM } from "./lib/library-rank.js";
 import { callLLM as providerCallLLM } from "./providers/index.js";
 import { computeMetrics } from "./lib/metrics.js";
@@ -580,6 +588,227 @@ document.querySelectorAll('input[name="rankerMode"]').forEach((r) => {
   });
 });
 
+// ---------- customer health chip (F2) ----------
+//
+// Lifecycle:
+//   - On panel init and on tab activation / URL change to a ticket page,
+//     scrape emails from `ul.customer-contacts li.customer-email`, fetch a
+//     snapshot per email, render the chip.
+//   - The chip is a one-line summary by default; the ▾ button expands it to
+//     show plan / tenure / conversations / NPS / tags / recent topics.
+//   - The ↻ button forces a fresh fetch (busts the 5-min session cache) —
+//     useful after a network blip or after Intercom data has just changed.
+//   - Multiple emails render small tabs above the header. The selected one
+//     also feeds compose() as customerContext on Generate.
+//   - Hides entirely when not on a ticket, no email found, or no Intercom
+//     key is configured.
+
+const customerChip = {
+  conversationId: null,
+  emails: [],
+  byEmail: new Map(), // email -> { snapshot, error, raw, classified }
+  selected: null,
+  expanded: false,
+  loadedConvAt: 0
+};
+
+let healthLoadToken = 0; // serialise concurrent loads; latest wins
+
+function chipNode(id) { return el(id); }
+
+function setChipHidden(hidden) {
+  const node = el("customerHealth");
+  if (node) node.hidden = !!hidden;
+}
+
+function renderHealthChip() {
+  const root = el("customerHealth");
+  if (!root) return;
+  const emails = customerChip.emails;
+  if (!emails.length) { root.hidden = true; return; }
+  root.hidden = false;
+
+  // Tabs (only when >1 email).
+  const tabsEl = el("hcTabs");
+  if (emails.length > 1) {
+    tabsEl.hidden = false;
+    tabsEl.innerHTML = emails.map((em) => {
+      const entry = customerChip.byEmail.get(em);
+      const cls = [
+        "hc-tab",
+        em === customerChip.selected ? "is-active" : "",
+        entry?.error ? "has-error" : ""
+      ].filter(Boolean).join(" ");
+      return `<button type="button" class="${cls}" data-email="${escapeHtml(em)}" title="${escapeHtml(em)}">${escapeHtml(em)}</button>`;
+    }).join("");
+    tabsEl.querySelectorAll("[data-email]").forEach((b) => {
+      b.addEventListener("click", () => {
+        customerChip.selected = b.dataset.email;
+        renderHealthChip();
+      });
+    });
+  } else {
+    tabsEl.hidden = true;
+    tabsEl.innerHTML = "";
+  }
+
+  const selected = customerChip.selected || emails[0];
+  const entry = customerChip.byEmail.get(selected) || {};
+  const dotEl = el("hcDot");
+  const labelEl = el("hcLabel");
+  const summaryEl = el("hcSummary");
+  const bodyEl = el("hcBody");
+
+  root.classList.toggle("is-error", !!entry.error);
+
+  if (entry.loading) {
+    dotEl.textContent = "⌛";
+    labelEl.textContent = "Loading…";
+    summaryEl.textContent = selected;
+    bodyEl.hidden = true;
+    return;
+  }
+
+  if (entry.error) {
+    dotEl.textContent = "🔴";
+    labelEl.textContent = "Intercom error";
+    summaryEl.textContent = entry.error;
+    if (customerChip.expanded) {
+      bodyEl.hidden = false;
+      bodyEl.innerHTML = `<div class="hc-meta-row">${escapeHtml(selected)}<br>${escapeHtml(entry.error)}<br>Click ↻ to retry, or check the Intercom key in Settings.</div>`;
+    } else {
+      bodyEl.hidden = true;
+    }
+    return;
+  }
+
+  const snap = entry.snapshot;
+  if (!snap) { root.hidden = true; return; }
+
+  const cls = classifyHealth(snap);
+  dotEl.textContent = HEALTH_DOTS[cls] || "⚪";
+  labelEl.textContent = HEALTH_LABELS[cls] || "Unknown";
+
+  const summaryParts = [];
+  if (snap.plan) summaryParts.push(snap.plan);
+  if (typeof snap.tenureDays === "number") summaryParts.push(`${snap.tenureDays}d`);
+  if (snap.conversationsLast90d != null) summaryParts.push(`${snap.conversationsLast90d} in 90d`);
+  if (typeof snap.npsScore === "number") summaryParts.push(`NPS ${snap.npsScore}`);
+  if (!snap.found) summaryParts.unshift(`${selected} — no record`);
+  summaryEl.textContent = summaryParts.join(" · ") || selected;
+
+  if (customerChip.expanded) {
+    bodyEl.hidden = false;
+    bodyEl.innerHTML = renderChipBody(snap, selected);
+  } else {
+    bodyEl.hidden = true;
+  }
+}
+
+function renderChipBody(snap, email) {
+  if (!snap?.found) {
+    return `<div class="hc-meta-row">No Intercom record for <strong>${escapeHtml(email)}</strong>.</div>`;
+  }
+  const lines = [];
+  const top = [];
+  if (snap.plan) top.push(`<strong>${escapeHtml(snap.plan)}</strong>`);
+  if (typeof snap.tenureDays === "number") top.push(`${snap.tenureDays} days tenure`);
+  if (typeof snap.lastSeenDays === "number") top.push(`last seen ${snap.lastSeenDays}d ago`);
+  if (top.length) lines.push(`<div class="hc-meta-row">${top.join(" · ")}</div>`);
+
+  const second = [];
+  second.push(`${snap.conversationsLast90d || 0} conversations · ${snap.openConversations || 0} open`);
+  if (typeof snap.npsScore === "number") second.push(`NPS ${snap.npsScore}`);
+  if ((snap.tags || []).length) second.push(`tags: ${snap.tags.join(", ")}`);
+  lines.push(`<div class="hc-meta-row">${escapeHtml(second.join(" · "))}</div>`);
+
+  if ((snap.recentSummaries || []).length) {
+    const items = snap.recentSummaries.map((s) =>
+      `<div class="hc-recent-item">• ${escapeHtml(s.title || "(no subject)")}</div>`
+    ).join("");
+    lines.push(`<div class="hc-recent"><div class="hc-recent-title">Recent topics</div>${items}</div>`);
+  }
+  return lines.join("");
+}
+
+async function loadCustomerHealth({ force = false } = {}) {
+  const token = ++healthLoadToken;
+  // Verify Intercom is configured. If not, hide the chip silently.
+  let cfgKey = "";
+  try {
+    const cfg = await getIntercomConfig();
+    cfgKey = cfg?.apiKey || "";
+  } catch { /* ignore */ }
+  if (!cfgKey) { setChipHidden(true); return; }
+
+  const { conversationId } = await getCurrentTicket();
+  if (!conversationId) { setChipHidden(true); return; }
+  if (token !== healthLoadToken) return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) { setChipHidden(true); return; }
+
+  const emails = await getCustomerEmailsFromPage(tab.id);
+  if (token !== healthLoadToken) return;
+  if (!emails.length) { setChipHidden(true); return; }
+
+  // Reset state for the new ticket if it changed, otherwise keep selection.
+  const ticketChanged = customerChip.conversationId !== conversationId;
+  if (ticketChanged) {
+    customerChip.conversationId = conversationId;
+    customerChip.byEmail = new Map();
+    customerChip.expanded = false;
+    customerChip.selected = emails[0];
+  }
+  customerChip.emails = emails;
+  if (!emails.includes(customerChip.selected)) customerChip.selected = emails[0];
+
+  // Show loading state immediately.
+  for (const e of emails) {
+    if (force || !customerChip.byEmail.get(e)?.snapshot) {
+      customerChip.byEmail.set(e, { loading: true });
+    }
+  }
+  renderHealthChip();
+
+  const results = await loadSnapshotsForEmails(emails, { force });
+  if (token !== healthLoadToken) return;
+
+  for (const r of results) {
+    if (r.error) {
+      customerChip.byEmail.set(r.email, { snapshot: null, error: r.error });
+    } else {
+      customerChip.byEmail.set(r.email, { snapshot: r.snapshot, error: null });
+      // One-time diagnostic log of the raw response when first fetched.
+      if (force || ticketChanged) {
+        console.log(`[OM/Intercom] ${r.email} →`, r.snapshot);
+      }
+    }
+  }
+  renderHealthChip();
+}
+
+el("hcRetry")?.addEventListener("click", () => {
+  loadCustomerHealth({ force: true }).catch((e) => {
+    showToast("sidepanelToasts", `Intercom retry failed: ${e.message}`, "err");
+  });
+});
+el("hcToggle")?.addEventListener("click", () => {
+  customerChip.expanded = !customerChip.expanded;
+  el("hcToggle").setAttribute("aria-expanded", customerChip.expanded ? "true" : "false");
+  el("hcToggle").textContent = customerChip.expanded ? "▴" : "▾";
+  renderHealthChip();
+});
+
+// Expose the selected snapshot for compose().
+function selectedCustomerContext() {
+  const sel = customerChip.selected;
+  if (!sel) return null;
+  const entry = customerChip.byEmail.get(sel);
+  if (!entry?.snapshot?.found) return null;
+  return stringifySnapshot(entry.snapshot);
+}
+
 // ---------- incoming selection (cursor-aware append) ----------
 function applyIncomingSelection(sel) {
   if (!sel?.text) return;
@@ -609,6 +838,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.last_ticket_opened?.newValue) {
     renderRevisitCard().catch(() => {});
     refreshStepOneSlot().catch(() => {});
+    loadCustomerHealth().catch(() => {});
   }
   if (changes.revisit_pending_action?.newValue) {
     consumeRevisitPendingAction().catch(() => {});
@@ -641,7 +871,8 @@ el("generateBtn").addEventListener("click", async () => {
           clicked_id: lastClickedSuggestionId
         }
       : null;
-    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf, suggestionLog });
+    const customerContext = selectedCustomerContext();
+    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf, suggestionLog, customerContext });
     if (result.error) {
       el("output").innerHTML = "";
       setStatus(el("formStatus"), result.error, "error");
@@ -1468,14 +1699,17 @@ async function handleRevisit(action, draft, conversationId) {
   await renderRevisitCard();
   await consumeRevisitPendingAction();
   await refreshStepOneSlot();
+  loadCustomerHealth().catch(() => {});
   chrome.tabs.onActivated?.addListener?.(() => {
     renderRevisitCard().catch(() => {});
     refreshStepOneSlot().catch(() => {});
+    loadCustomerHealth().catch(() => {});
   });
   chrome.tabs.onUpdated?.addListener?.((_, info) => {
     if (info.url) {
       renderRevisitCard().catch(() => {});
       refreshStepOneSlot().catch(() => {});
+      loadCustomerHealth().catch(() => {});
     }
   });
 })();
