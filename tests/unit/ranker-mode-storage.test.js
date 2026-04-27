@@ -19,6 +19,12 @@ describe("ranker mode storage", () => {
     expect(await getRankerMode()).toBe("lexical");
   });
 
+  it("persists llm in chrome.storage.sync for cross-session ranker state", async () => {
+    await setRankerMode("llm");
+    const { ranker_mode } = await chrome.storage.sync.get("ranker_mode");
+    expect(ranker_mode).toBe("llm");
+  });
+
   it("returns the default when storage holds an unknown value", async () => {
     await chrome.storage.sync.set({ ranker_mode: "magic" });
     expect(await getRankerMode()).toBe("lexical");

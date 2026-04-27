@@ -58,6 +58,7 @@ function spliceAtCursor(textarea, text) {
   const newPos = start + insertion.length;
   textarea.focus();
   textarea.setSelectionRange(newPos, newPos);
+  if (textarea === el("draft")) scheduleSuggestions();
 }
 
 // ---------- form helpers ----------
@@ -381,21 +382,79 @@ function renderStripEmpty(text, kind = "ok") {
   lastImpressionIds = [];
 }
 
+function formatSuggestionSets(d) {
+  if (!d || typeof d !== "object") return "—";
+  const bits = [];
+  if (d.goal) bits.push(`goal=${d.goal}`);
+  if (d.audience) bits.push(`audience=${d.audience}`);
+  if (d.tone) bits.push(`tone=${d.tone}`);
+  if (d.mode) bits.push(`mode=${d.mode}`);
+  bits.push(`concise=${d.concise ? "yes" : "no"}`);
+  return bits.length ? bits.join(" · ") : "—";
+}
+
 function renderStripRows(results, totalEntries) {
-  const rows = results.map(({ entry, score, reason }, i) => `
-    <div class="ss-row${i === 0 ? " is-top" : ""}" data-id="${escapeHtml(entry.id)}">
-      <div class="ss-star">${i === 0 ? "⭐" : "•"}</div>
-      <div class="ss-text">
-        <div class="ss-text-title">${escapeHtml(entry.scenario_title || "Untitled")}</div>
-        <div class="ss-text-summary">${escapeHtml(entry.scenario_summary || "")}</div>
+  const rows = results.map(({ entry, score, reason }, i) => {
+    const id = escapeHtml(entry.id);
+    const reasonAttr = escapeHtml(reason || "");
+    const setsLine = escapeHtml(formatSuggestionSets(entry.dropdowns));
+    const instr = escapeHtml(entry.scenario_instruction || "");
+    const reasonBody = escapeHtml(reason || "—");
+    return `
+    <div class="ss-row${i === 0 ? " is-top" : ""}" data-id="${id}">
+      <div class="ss-row-line">
+        <div class="ss-star">${i === 0 ? "⭐" : "•"}</div>
+        <button type="button" class="ss-caret" aria-expanded="false" aria-label="Show full instruction and scores">▸</button>
+        <div class="ss-text">
+          <div class="ss-text-title">${escapeHtml(entry.scenario_title || "Untitled")}</div>
+          <div class="ss-text-summary">${escapeHtml(entry.scenario_summary || "")}</div>
+        </div>
+        <div class="ss-score" title="${reasonAttr}">${Math.round(score)}</div>
+        <button type="button" class="ss-use" data-use="${id}">Use ▸</button>
       </div>
-      <div class="ss-score" title="${escapeHtml(reason || "")}">${Math.round(score)}</div>
-      <button class="ss-use" data-use="${escapeHtml(entry.id)}">Use ▸</button>
-    </div>
-  `).join("");
+      <div class="ss-expand" hidden>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Instruction</span>
+          <div class="ss-expand-instruction">${instr}</div>
+        </div>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Sets</span>
+          <div class="ss-expand-sets">${setsLine}</div>
+        </div>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Score</span>
+          <div class="ss-expand-score">${reasonBody}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
   el("ssBody").innerHTML = rows;
   el("ssFoot").textContent = `${results.length} of ${totalEntries} entries`;
   lastImpressionIds = results.map((r) => r.entry.id);
+
+  el("ssBody").querySelectorAll(".ss-caret").forEach((caret) => {
+    caret.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = caret.closest(".ss-row");
+      const expand = row?.querySelector(".ss-expand");
+      if (!expand) return;
+      const willOpen = expand.hidden;
+      el("ssBody").querySelectorAll(".ss-row").forEach((r) => {
+        const ex = r.querySelector(".ss-expand");
+        const c = r.querySelector(".ss-caret");
+        if (ex) ex.hidden = true;
+        if (c) {
+          c.setAttribute("aria-expanded", "false");
+          c.textContent = "▸";
+        }
+      });
+      if (willOpen) {
+        expand.hidden = false;
+        caret.setAttribute("aria-expanded", "true");
+        caret.textContent = "▾";
+      }
+    });
+  });
 
   el("ssBody").querySelectorAll("button[data-use]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -484,6 +543,7 @@ function scheduleSuggestions() {
 
 (async () => {
   await syncRankerToggleFromStorage();
+  scheduleSuggestions();
 })();
 
 el("draft").addEventListener("input", scheduleSuggestions);
@@ -579,7 +639,7 @@ el("generateBtn").addEventListener("click", async () => {
   }
 });
 
-el("clearBtn").addEventListener("click", () => {
+el("clearBtn").addEventListener("click", async () => {
   el("draft").value = "";
   el("promptExtra").value = "";
   el("output").innerHTML = "";
@@ -588,6 +648,9 @@ el("clearBtn").addEventListener("click", () => {
   el("libraryPick").value = "";
   el("libraryPickMeta").textContent = "";
   setStatus(el("formStatus"), "");
+  await setRankerMode("lexical");
+  await syncRankerToggleFromStorage();
+  scheduleSuggestions();
 });
 
 // ---------- render output ----------

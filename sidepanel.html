@@ -276,10 +276,34 @@
     .suggestion-strip .ss-rankers { color: var(--muted); display: flex; gap: 8px; align-items: center; }
     .suggestion-strip .ss-rankers label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
     .suggestion-strip .ss-body { padding: 4px 0; }
-    .suggestion-strip .ss-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #f3f4f6; }
+    .suggestion-strip .ss-row {
+      display: flex; flex-direction: column; align-items: stretch;
+      padding: 0; border-bottom: 1px solid #f3f4f6;
+    }
     .suggestion-strip .ss-row:last-child { border-bottom: none; }
+    .suggestion-strip .ss-row-line {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    }
     .suggestion-strip .ss-row.is-top .ss-star { opacity: 1; }
     .suggestion-strip .ss-star { width: 14px; opacity: 0.25; font-size: 12px; flex-shrink: 0; }
+    .suggestion-strip .ss-caret {
+      width: 18px; flex-shrink: 0; padding: 0; margin: 0; border: none; background: transparent;
+      font-size: 11px; line-height: 1; color: var(--muted); cursor: pointer; border-radius: 3px;
+    }
+    .suggestion-strip .ss-caret:hover { color: var(--text); background: #f3f4f6; }
+    .suggestion-strip .ss-expand {
+      padding: 8px 10px 10px 38px; border-top: 1px dashed #e5e7eb;
+      font-size: 11px; color: var(--muted); background: #fafafa;
+    }
+    .suggestion-strip .ss-expand-label {
+      font-weight: 600; color: #374151; display: block; margin-top: 8px;
+    }
+    .suggestion-strip .ss-expand-block:first-child .ss-expand-label { margin-top: 0; }
+    .suggestion-strip .ss-expand-instruction {
+      white-space: pre-wrap; color: var(--text); margin-top: 3px; font-size: 11px; line-height: 1.45;
+    }
+    .suggestion-strip .ss-expand-sets,
+    .suggestion-strip .ss-expand-score { margin-top: 3px; line-height: 1.45; }
     .suggestion-strip .ss-text { flex: 1; min-width: 0; }
     .suggestion-strip .ss-text-title { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .suggestion-strip .ss-text-summary { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

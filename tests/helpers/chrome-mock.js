@@ -1,5 +1,8 @@
 import { beforeEach, vi } from "vitest";
 
+/** Persists across installChromeMock() so module-level listeners stay valid. */
+const storageOnChangedListeners = [];
+
 function makeArea() {
   const store = new Map();
   return {
@@ -37,6 +40,15 @@ function installChromeMock() {
       local: makeArea(),
       sync: makeArea(),
       session: makeArea(),
+      onChanged: {
+        addListener: vi.fn((fn) => {
+          storageOnChangedListeners.push(fn);
+        }),
+        removeListener: vi.fn((fn) => {
+          const i = storageOnChangedListeners.indexOf(fn);
+          if (i !== -1) storageOnChangedListeners.splice(i, 1);
+        }),
+      },
     },
     runtime: {
       getURL: vi.fn((p) => `chrome-extension://test/${p}`),
@@ -57,6 +69,13 @@ function installChromeMock() {
 }
 
 installChromeMock();
+
+/** Fire `chrome.storage.onChanged` listeners (e.g. incoming_selection) in UI tests. */
+globalThis.__testFireChromeStorageLocalChange = (changes) => {
+  for (const fn of [...storageOnChangedListeners]) {
+    fn(changes, "local");
+  }
+};
 
 beforeEach(() => {
   installChromeMock();
