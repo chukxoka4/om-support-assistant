@@ -5,12 +5,38 @@ import {
   getTaxonomy, addTaxonomyValue,
   getAllDrafts, updateDraft,
   getUnresolvedDeliveredByConversation,
-  draftIsRevisitPending
+  draftIsRevisitPending,
+  getRankerMode, setRankerMode,
+  getIntercomConfig, setIntercomConfig
 } from "./lib/storage.js";
+import {
+  makeIntercomClient,
+  detectTimestamp,
+  formatTimestampMs
+} from "./lib/intercom-client.js";
+import {
+  loadSnapshotsForEmails,
+  classifyHealth,
+  HEALTH_LABELS,
+  HEALTH_DOTS,
+  stringifySnapshot
+} from "./lib/intercom-snapshot.js";
+import { getCustomerEmailsFromPage } from "./lib/ticket.js";
+import { rankLexical, rankLLM } from "./lib/library-rank.js";
+import { callLLM as providerCallLLM } from "./providers/index.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
-  getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry
+  getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
+  applySuggestion,
+  replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
+import { proposeSuggestion } from "./lib/suggestions.js";
+import { diffImport, mergeNewOnly } from "./lib/library-import.js";
+import { showToast } from "./lib/toast.js";
+import { computeAuditMetrics } from "./lib/audit-metrics.js";
+import { parseWpsaJson } from "./lib/wpsa-schema.js";
+import { buildReportHtml } from "./lib/report-html.js";
+import { buildSlackSnippet } from "./lib/report-slack.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
@@ -50,6 +76,7 @@ function spliceAtCursor(textarea, text) {
   const newPos = start + insertion.length;
   textarea.focus();
   textarea.setSelectionRange(newPos, newPos);
+  if (textarea === el("draft")) scheduleSuggestions();
 }
 
 // ---------- form helpers ----------
@@ -91,6 +118,8 @@ async function loadSettings() {
   el("geminiKey").value = keys.gemini || "";
   el("claudeKey").value = keys.claude || "";
   el("openaiKey").value = keys.openai || "";
+  const intercom = await getIntercomConfig();
+  if (el("intercomKey")) el("intercomKey").value = intercom.apiKey || "";
   await refreshProviderSelects();
 }
 
@@ -125,6 +154,160 @@ async function refreshProviderSelects() {
   }
 }
 
+// ---------- library export / import / reset (mirrors options.js) ----------
+let pendingLibraryImport = null; // { entries, diff }
+
+function setSettingsStatus(text, kind = "ok") {
+  showToast("sidepanelToasts", text, kind);
+}
+
+function validateLibraryEntry(entry, idx) {
+  if (!entry || typeof entry !== "object")
+    throw new Error(`Entry ${idx}: not an object`);
+  if (typeof entry.id !== "string" || !entry.id)
+    throw new Error(`Entry ${idx}: missing id`);
+  if (typeof entry.product !== "string" || !entry.product)
+    throw new Error(`Entry ${idx}: missing product`);
+  if (!entry.dropdowns || typeof entry.dropdowns !== "object")
+    throw new Error(`Entry ${idx}: missing dropdowns`);
+  if (typeof entry.scenario_instruction !== "string" || !entry.scenario_instruction)
+    throw new Error(`Entry ${idx}: missing scenario_instruction`);
+}
+
+function renderLibraryImportConfirm(diff) {
+  el("importSummary").innerHTML = `
+    File: <b>${diff.incomingTotal}</b> entries · You have <b>${diff.currentTotal}</b>.<br>
+    <b>${diff.toAdd.length}</b> new ·
+    <b>${diff.sameAsLocal.length}</b> identical ·
+    <b>${diff.conflicts.length}</b> conflicting.`;
+  el("importMergeHint").textContent =
+    `Merge: adds ${diff.toAdd.length} new. Existing entries (and scores) untouched.`;
+  el("importReplaceHint").textContent =
+    `Replace: drops your ${diff.currentTotal} entries. Scores reset.`;
+  el("importConfirm").hidden = false;
+}
+
+function closeLibraryImportConfirm() {
+  el("importConfirm").hidden = true;
+  pendingLibraryImport = null;
+}
+
+el("exportLibrary").addEventListener("click", async () => {
+  try {
+    const [library, drafts] = await Promise.all([getAllEntries(), getAllDrafts()]);
+    const payload = {
+      exported_at: new Date().toISOString(),
+      version: 3,
+      library,
+      drafts
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `om-assistant-library-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSettingsStatus(`Exported ${library.length} entries.`, "ok");
+  } catch (err) {
+    setSettingsStatus(`Export failed: ${err.message}`, "err");
+  }
+});
+
+el("importLibrary").addEventListener("click", () => el("importFile").click());
+
+el("importFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (parsed.version !== 3) throw new Error(`Unsupported version: ${parsed.version}`);
+    if (!Array.isArray(parsed.library)) throw new Error("Missing library array");
+    parsed.library.forEach(validateLibraryEntry);
+    const current = await getAllEntries();
+    const diff = diffImport(current, parsed.library);
+    pendingLibraryImport = { entries: parsed.library, diff };
+    renderLibraryImportConfirm(diff);
+    setSettingsStatus(`Loaded ${parsed.library.length} entries — confirm below.`, "ok");
+  } catch (err) {
+    closeLibraryImportConfirm();
+    setSettingsStatus(`Import failed: ${err.message}`, "err");
+  }
+});
+
+el("importMerge").addEventListener("click", async () => {
+  if (!pendingLibraryImport) return;
+  try {
+    const current = await getAllEntries();
+    const merged = mergeNewOnly(
+      current.map(({ weighted_score, ...rest }) => rest),
+      pendingLibraryImport.entries
+    );
+    await replaceAllEntries(merged);
+    setSettingsStatus(
+      `Merged: added ${pendingLibraryImport.diff.toAdd.length} new entries.`,
+      "ok"
+    );
+  } catch (err) {
+    setSettingsStatus(`Merge failed: ${err.message}`, "err");
+  } finally {
+    closeLibraryImportConfirm();
+    await renderLibraryPicker();
+  }
+});
+
+el("importReplace").addEventListener("click", async () => {
+  if (!pendingLibraryImport) return;
+  try {
+    await replaceAllEntries(pendingLibraryImport.entries);
+    setSettingsStatus(
+      `Replaced: now ${pendingLibraryImport.entries.length} entries.`,
+      "ok"
+    );
+  } catch (err) {
+    setSettingsStatus(`Replace failed: ${err.message}`, "err");
+  } finally {
+    closeLibraryImportConfirm();
+    await renderLibraryPicker();
+  }
+});
+
+el("importCancel").addEventListener("click", () => {
+  closeLibraryImportConfirm();
+  setSettingsStatus("Import cancelled.", "ok");
+});
+
+el("resetLibrary").addEventListener("click", async () => {
+  try {
+    await clearAll();
+    const result = await seedIfEmpty();
+    setSettingsStatus(`Reset to seeds (${result.count || 0} entries).`, "ok");
+    await renderLibraryPicker();
+  } catch (err) {
+    setSettingsStatus(`Reset failed: ${err.message}`, "err");
+  }
+});
+
+el("testIntercom")?.addEventListener("click", async () => {
+  const apiKey = el("intercomKey")?.value?.trim() || "";
+  if (!apiKey) {
+    showToast("sidepanelToasts", "Enter an Intercom key first.", "err");
+    return;
+  }
+  showToast("sidepanelToasts", "Testing Intercom…", "ok");
+  try {
+    const client = makeIntercomClient({ apiKey });
+    const me = await client.call("/me");
+    const appName = me?.app?.name || me?.name || "OK";
+    showToast("sidepanelToasts", `Intercom connected (${appName}).`, "ok");
+  } catch (e) {
+    showToast("sidepanelToasts", `Intercom test failed: ${e.message}`, "err");
+  }
+});
+
 el("saveSettings").addEventListener("click", async () => {
   await setApiKeys({
     gemini: el("geminiKey").value.trim(),
@@ -133,6 +316,8 @@ el("saveSettings").addEventListener("click", async () => {
   });
   const chosen = el("defaultProvider").value;
   if (chosen && chosen !== "— no providers configured —") await setDefaultProvider(chosen);
+  const intercomKey = el("intercomKey")?.value?.trim() || "";
+  await setIntercomConfig({ apiKey: intercomKey });
   await refreshProviderSelects();
   setStatus(el("settingsStatus"), "Saved.", "ok");
   setTimeout(() => setStatus(el("settingsStatus"), ""), 1500);
@@ -198,6 +383,718 @@ el("libraryPick").addEventListener("change", async (e) => {
   meta.textContent = entry.scenario_summary;
 });
 
+// ---------- in-textarea suggestions strip (F1) ----------
+//
+// Watches the draft textarea + dropdowns. After ~600ms idle and ≥80 chars,
+// loads the library, runs the active ranker, renders up to 5 results.
+// "Use" applies the entry to the dropdown — reusing the existing handler.
+
+const SUGGESTION_DEBOUNCE_MS = 600;
+const SUGGESTION_MIN_CHARS = 80;
+let suggestionTimer = null;
+let lastSuggestionRunId = 0;
+
+// Most recent impression — what was on screen at the moment of Generate.
+// Logged into the draft record so we can compute later "ignored 5/5" rates.
+let lastImpressionIds = [];
+let lastImpressionMode = null;
+let lastClickedSuggestionId = null;
+
+function shouldHideStrip(values) {
+  if (!values.draft || values.draft.length < SUGGESTION_MIN_CHARS) return true;
+  if (values.libraryEntryId) return true;
+  if (el("output")?.innerHTML?.trim()) return true;
+  return false;
+}
+
+async function syncRankerToggleFromStorage() {
+  const mode = await getRankerMode();
+  for (const r of document.querySelectorAll('input[name="rankerMode"]')) {
+    r.checked = r.value === mode;
+  }
+  return mode;
+}
+
+function renderStripEmpty(text, kind = "ok") {
+  el("ssBody").innerHTML = `<div class="ss-empty${kind === "err" ? " is-error" : ""}">${escapeHtml(text)}</div>`;
+  el("ssFoot").textContent = "";
+  lastImpressionIds = [];
+}
+
+function formatSuggestionSets(d) {
+  if (!d || typeof d !== "object") return "—";
+  const bits = [];
+  if (d.goal) bits.push(`goal=${d.goal}`);
+  if (d.audience) bits.push(`audience=${d.audience}`);
+  if (d.tone) bits.push(`tone=${d.tone}`);
+  if (d.mode) bits.push(`mode=${d.mode}`);
+  bits.push(`concise=${d.concise ? "yes" : "no"}`);
+  return bits.length ? bits.join(" · ") : "—";
+}
+
+function renderStripRows(results, totalEntries) {
+  const rows = results.map(({ entry, score, reason }, i) => {
+    const id = escapeHtml(entry.id);
+    const reasonAttr = escapeHtml(reason || "");
+    const setsLine = escapeHtml(formatSuggestionSets(entry.dropdowns));
+    const instr = escapeHtml(entry.scenario_instruction || "");
+    const reasonBody = escapeHtml(reason || "—");
+    return `
+    <div class="ss-row${i === 0 ? " is-top" : ""}" data-id="${id}">
+      <div class="ss-row-line">
+        <div class="ss-star">${i === 0 ? "⭐" : "•"}</div>
+        <button type="button" class="ss-caret" aria-expanded="false" aria-label="Show full instruction and scores">▸</button>
+        <div class="ss-text">
+          <div class="ss-text-title">${escapeHtml(entry.scenario_title || "Untitled")}</div>
+          <div class="ss-text-summary">${escapeHtml(entry.scenario_summary || "")}</div>
+        </div>
+        <div class="ss-score" title="${reasonAttr}">${Math.round(score)}</div>
+        <button type="button" class="ss-use" data-use="${id}">Use ▸</button>
+      </div>
+      <div class="ss-expand" hidden>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Instruction</span>
+          <div class="ss-expand-instruction">${instr}</div>
+        </div>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Sets</span>
+          <div class="ss-expand-sets">${setsLine}</div>
+        </div>
+        <div class="ss-expand-block">
+          <span class="ss-expand-label">Score</span>
+          <div class="ss-expand-score">${reasonBody}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+  el("ssBody").innerHTML = rows;
+  el("ssFoot").textContent = `${results.length} of ${totalEntries} entries`;
+  lastImpressionIds = results.map((r) => r.entry.id);
+
+  el("ssBody").querySelectorAll(".ss-caret").forEach((caret) => {
+    caret.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = caret.closest(".ss-row");
+      const expand = row?.querySelector(".ss-expand");
+      if (!expand) return;
+      const willOpen = expand.hidden;
+      el("ssBody").querySelectorAll(".ss-row").forEach((r) => {
+        const ex = r.querySelector(".ss-expand");
+        const c = r.querySelector(".ss-caret");
+        if (ex) ex.hidden = true;
+        if (c) {
+          c.setAttribute("aria-expanded", "false");
+          c.textContent = "▸";
+        }
+      });
+      if (willOpen) {
+        expand.hidden = false;
+        caret.setAttribute("aria-expanded", "true");
+        caret.textContent = "▾";
+      }
+    });
+  });
+
+  el("ssBody").querySelectorAll("button[data-use]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.use;
+      lastClickedSuggestionId = id;
+      const pick = el("libraryPick");
+      pick.value = id;
+      pick.dispatchEvent(new Event("change"));
+      // Hide strip — the user has chosen.
+      el("suggestionStrip").hidden = true;
+    });
+  });
+}
+
+async function runSuggestionRanker() {
+  const runId = ++lastSuggestionRunId;
+  const values = getFormValues();
+  if (shouldHideStrip(values)) {
+    el("suggestionStrip").hidden = true;
+    return;
+  }
+
+  const mode = await getRankerMode();
+  lastImpressionMode = mode;
+  el("suggestionStrip").hidden = false;
+  renderStripEmpty(mode === "llm" ? "Asking LLM ranker…" : "Ranking…");
+
+  const dropdowns = {
+    product: values.product,
+    goal: values.goal,
+    audience: values.audience,
+    tone: values.tone,
+    mode: values.mode,
+    concise: values.concise
+  };
+
+  let entries;
+  try {
+    entries = await getAllEntries();
+  } catch (e) {
+    if (runId !== lastSuggestionRunId) return;
+    renderStripEmpty(`Couldn't load library: ${e.message}`, "err");
+    return;
+  }
+  if (!entries.length) {
+    if (runId !== lastSuggestionRunId) return;
+    renderStripEmpty("Library is empty.");
+    return;
+  }
+
+  let results;
+  try {
+    results = mode === "llm"
+      ? await rankLLM(values.draft, dropdowns, entries, providerCallLLM)
+      : rankLexical(values.draft, dropdowns, entries);
+  } catch (e) {
+    if (runId !== lastSuggestionRunId) return;
+    el("ssBody").innerHTML = `
+      <div class="ss-empty is-error">
+        ⚠ ${escapeHtml(e.message)}
+        <div style="margin-top:6px"><button class="ss-use" id="ssRetry">Retry</button>
+        <button class="ss-use" id="ssFallbackLex">Use lexical</button></div>
+      </div>`;
+    el("ssBody").querySelector("#ssRetry")?.addEventListener("click", () => runSuggestionRanker());
+    el("ssBody").querySelector("#ssFallbackLex")?.addEventListener("click", async () => {
+      await setRankerMode("lexical");
+      await syncRankerToggleFromStorage();
+      runSuggestionRanker();
+    });
+    el("ssFoot").textContent = "";
+    return;
+  }
+
+  if (runId !== lastSuggestionRunId) return;
+  if (!results.length) {
+    renderStripEmpty("No close match — Generate will create a new entry.");
+    return;
+  }
+  renderStripRows(results, entries.length);
+}
+
+function scheduleSuggestions() {
+  clearTimeout(suggestionTimer);
+  suggestionTimer = setTimeout(runSuggestionRanker, SUGGESTION_DEBOUNCE_MS);
+}
+
+(async () => {
+  await syncRankerToggleFromStorage();
+  scheduleSuggestions();
+})();
+
+el("draft").addEventListener("input", scheduleSuggestions);
+for (const id of ["product", "goal", "audience", "tone", "mode", "concise"]) {
+  el(id)?.addEventListener("change", scheduleSuggestions);
+}
+document.querySelectorAll('input[name="rankerMode"]').forEach((r) => {
+  r.addEventListener("change", async (e) => {
+    await setRankerMode(e.target.value);
+    runSuggestionRanker();
+  });
+});
+
+// ---------- customer health chip (F2) ----------
+//
+// Lifecycle:
+//   - On panel init and on tab activation / URL change to a ticket page,
+//     scrape emails from `ul.customer-contacts li.customer-email`, fetch a
+//     snapshot per email, render the chip.
+//   - The chip is a one-line summary by default; the ▾ button expands it to
+//     show plan / tenure / conversations / NPS / tags / recent topics.
+//   - The ↻ button forces a fresh fetch (busts the 5-min session cache) —
+//     useful after a network blip or after Intercom data has just changed.
+//   - Multiple emails render small tabs above the header. The selected one
+//     also feeds compose() as customerContext on Generate.
+//   - Hides entirely when not on a ticket, no email found, or no Intercom
+//     key is configured.
+
+const customerChip = {
+  conversationId: null,
+  emails: [],
+  byEmail: new Map(), // email -> { snapshot, error, raw, classified }
+  manualEmails: new Set(), // emails added via the "Check another email" input
+  selected: null,
+  expanded: false,
+  loadedConvAt: 0
+};
+
+let healthLoadToken = 0; // serialise concurrent loads; latest wins
+
+function chipNode(id) { return el(id); }
+
+function setChipHidden(hidden) {
+  const node = el("customerHealth");
+  if (node) node.hidden = !!hidden;
+}
+
+function renderHealthChip() {
+  const root = el("customerHealth");
+  if (!root) return;
+  const emails = customerChip.emails;
+  if (!emails.length) { root.hidden = true; return; }
+  root.hidden = false;
+
+  // Tabs (only when >1 email).
+  const tabsEl = el("hcTabs");
+  if (emails.length > 1) {
+    tabsEl.hidden = false;
+    tabsEl.innerHTML = emails.map((em) => {
+      const entry = customerChip.byEmail.get(em);
+      const cls = [
+        "hc-tab",
+        em === customerChip.selected ? "is-active" : "",
+        entry?.error ? "has-error" : "",
+        customerChip.manualEmails.has(em) ? "is-manual" : ""
+      ].filter(Boolean).join(" ");
+      const titleParts = [em];
+      if (customerChip.manualEmails.has(em)) titleParts.push("manually added");
+      return `<button type="button" class="${cls}" data-email="${escapeHtml(em)}" title="${escapeHtml(titleParts.join(" — "))}">${escapeHtml(em)}</button>`;
+    }).join("");
+    tabsEl.querySelectorAll("[data-email]").forEach((b) => {
+      b.addEventListener("click", () => {
+        customerChip.selected = b.dataset.email;
+        renderHealthChip();
+      });
+    });
+  } else {
+    tabsEl.hidden = true;
+    tabsEl.innerHTML = "";
+  }
+
+  const selected = customerChip.selected || emails[0];
+  const entry = customerChip.byEmail.get(selected) || {};
+  const dotEl = el("hcDot");
+  const labelEl = el("hcLabel");
+  const summaryEl = el("hcSummary");
+  const bodyEl = el("hcBody");
+
+  root.classList.toggle("is-error", !!entry.error);
+
+  if (entry.loading) {
+    dotEl.textContent = "⌛";
+    labelEl.textContent = "Loading…";
+    summaryEl.textContent = selected;
+    bodyEl.hidden = true;
+    return;
+  }
+
+  if (entry.error) {
+    dotEl.textContent = "🔴";
+    labelEl.textContent = "Intercom error";
+    summaryEl.textContent = entry.error;
+    if (customerChip.expanded) {
+      bodyEl.hidden = false;
+      bodyEl.innerHTML = `<div class="hc-meta-row">${escapeHtml(selected)}<br>${escapeHtml(entry.error)}<br>Click ↻ to retry, or check the Intercom key in Settings.</div>`;
+    } else {
+      bodyEl.hidden = true;
+    }
+    return;
+  }
+
+  const snap = entry.snapshot;
+  if (!snap) { root.hidden = true; return; }
+
+  const { tier, reason } = classifyHealth(snap);
+  dotEl.textContent = HEALTH_DOTS[tier] || "⚪";
+  labelEl.textContent = HEALTH_LABELS[tier] || "Unknown";
+  // Tooltip on the dot surfaces the reason without expanding.
+  dotEl.title = reason || "";
+  labelEl.title = reason || "";
+
+  const summaryParts = [];
+  if (snap.plan) summaryParts.push(snap.plan);
+  if (snap.subscriptionStatus) summaryParts.push(snap.subscriptionStatus);
+  if (typeof snap.lastSeenDays === "number") summaryParts.push(`seen ${snap.lastSeenDays}d`);
+  if (!snap.found) summaryParts.unshift(`${selected} — no record`);
+  summaryEl.textContent = summaryParts.join(" · ") || selected;
+
+  if (customerChip.expanded) {
+    bodyEl.hidden = false;
+    bodyEl.innerHTML = renderChipBody(snap, selected, reason);
+  } else {
+    bodyEl.hidden = true;
+  }
+}
+
+function renderChipBody(snap, email, reason) {
+  if (!snap?.found) {
+    return `<div class="hc-meta-row">No Intercom record for <strong>${escapeHtml(email)}</strong>.</div>`;
+  }
+  const sections = [];
+
+  // Why summary at the very top.
+  if (reason) {
+    sections.push(`<div class="hc-meta-row hc-why"><strong>Why:</strong> ${escapeHtml(reason)}</div>`);
+  }
+
+  // Subscription
+  const subBits = [];
+  if (snap.plan) subBits.push(`Plan: <strong>${escapeHtml(snap.plan)}</strong>`);
+  if (snap.subscriptionStatus) subBits.push(`Status: <strong>${escapeHtml(snap.subscriptionStatus)}</strong>`);
+  if (typeof snap.tenureDays === "number") subBits.push(`Tenure: ${snap.tenureDays}d`);
+  if (typeof snap.mrr === "number") subBits.push(`MRR: ${snap.mrr}`);
+  if (typeof snap.trialEndsInDays === "number") {
+    const phrase = snap.trialEndsInDays >= 0
+      ? `Trial ends in ${snap.trialEndsInDays}d`
+      : `Trial expired ${Math.abs(snap.trialEndsInDays)}d ago`;
+    subBits.push(phrase);
+  }
+  if (subBits.length) {
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Subscription</div><div class="hc-meta-row">${subBits.join(" · ")}</div></div>`);
+  }
+
+  // Engagement
+  const engBits = [];
+  if (typeof snap.lastSeenDays === "number") engBits.push(`Last seen: ${snap.lastSeenDays}d ago`);
+  if (typeof snap.sessionCount === "number") engBits.push(`Sessions: ${snap.sessionCount}`);
+  if (typeof snap.lastEmailOpenDays === "number") engBits.push(`Email opened: ${snap.lastEmailOpenDays}d`);
+  if (typeof snap.lastEmailClickDays === "number") engBits.push(`Email clicked: ${snap.lastEmailClickDays}d`);
+  const flagBits = [];
+  if (snap.unsubscribedFromEmails) flagBits.push("unsubscribed");
+  if (snap.hasHardBounced) flagBits.push("hard-bounced");
+  if (engBits.length || flagBits.length) {
+    let row = engBits.join(" · ");
+    if (flagBits.length) row += `${row ? " · " : ""}<strong>${flagBits.join(" · ")}</strong>`;
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Engagement</div><div class="hc-meta-row">${row}</div></div>`);
+  }
+
+  // Identity
+  const idBits = [];
+  if (snap.name) idBits.push(`Name: <strong>${escapeHtml(snap.name)}</strong>`);
+  if (snap.companyName) {
+    const seats = typeof snap.companySeats === "number" ? ` (${snap.companySeats})` : "";
+    idBits.push(`Company: ${escapeHtml(snap.companyName)}${seats}`);
+  }
+  if (snap.location) idBits.push(`Location: ${escapeHtml(snap.location)}`);
+  if (snap.language) idBits.push(`Language: ${escapeHtml(snap.language)}`);
+  if ((snap.tags || []).length) idBits.push(`Tags: ${snap.tags.map(escapeHtml).join(", ")}`);
+  if (typeof snap.npsScore === "number") idBits.push(`NPS: ${snap.npsScore}`);
+  if (idBits.length) {
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Identity</div><div class="hc-meta-row">${idBits.join(" · ")}</div></div>`);
+  }
+
+  // Custom attributes verbatim — the workspace-specific ones. Timestamps
+  // are formatted to relative + ISO so raw unix values don't confuse.
+  const custom = snap.customAttributes || {};
+  const customKeys = Object.keys(custom).filter((k) => custom[k] !== null && custom[k] !== "" && custom[k] !== undefined);
+  if (customKeys.length) {
+    const rows = customKeys.map((k) => {
+      let v = custom[k];
+      const ts = detectTimestamp(k, v);
+      let displayed;
+      if (ts) {
+        displayed = formatTimestampMs(ts.ms);
+      } else if (typeof v === "object") {
+        displayed = JSON.stringify(v).slice(0, 120);
+      } else {
+        displayed = String(v);
+      }
+      return `<div class="hc-meta-row"><strong>${escapeHtml(k)}</strong>: ${escapeHtml(displayed)}</div>`;
+    }).join("");
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Custom</div>${rows}</div>`);
+  }
+
+  // Recent topics — only if we actually got conversations from Intercom
+  // (probably never for OM workspace, but keep the section for forward
+  // compatibility).
+  if ((snap.recentSummaries || []).length) {
+    const items = snap.recentSummaries.map((s) =>
+      `<div class="hc-recent-item">• ${escapeHtml(s.title || "(no subject)")}</div>`
+    ).join("");
+    sections.push(`<div class="hc-section"><div class="hc-section-title">Recent topics</div>${items}</div>`);
+  }
+
+  return sections.join("");
+}
+
+async function loadCustomerHealth({ force = false } = {}) {
+  const token = ++healthLoadToken;
+  // Verify Intercom is configured. If not, hide the chip silently.
+  let cfgKey = "";
+  try {
+    const cfg = await getIntercomConfig();
+    cfgKey = cfg?.apiKey || "";
+  } catch { /* ignore */ }
+  if (!cfgKey) { setChipHidden(true); return; }
+
+  const { conversationId } = await getCurrentTicket();
+  if (!conversationId) { setChipHidden(true); return; }
+  if (token !== healthLoadToken) return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) { setChipHidden(true); return; }
+
+  const emails = await getCustomerEmailsFromPage(tab.id);
+  if (token !== healthLoadToken) return;
+  if (!emails.length) { setChipHidden(true); return; }
+
+  // Reset state for the new ticket if it changed, otherwise keep selection.
+  const ticketChanged = customerChip.conversationId !== conversationId;
+  if (ticketChanged) {
+    customerChip.conversationId = conversationId;
+    customerChip.byEmail = new Map();
+    customerChip.manualEmails = new Set();
+    customerChip.expanded = false;
+    customerChip.selected = emails[0];
+  } else {
+    // Same ticket — preserve any previously-fetched manual emails alongside
+    // the page-detected ones so the Retry button doesn't drop them.
+    for (const em of customerChip.manualEmails) {
+      if (!emails.includes(em)) emails.push(em);
+    }
+  }
+  customerChip.emails = emails;
+  if (!emails.includes(customerChip.selected)) customerChip.selected = emails[0];
+
+  // Show loading state immediately.
+  for (const e of emails) {
+    if (force || !customerChip.byEmail.get(e)?.snapshot) {
+      customerChip.byEmail.set(e, { loading: true });
+    }
+  }
+  renderHealthChip();
+
+  const results = await loadSnapshotsForEmails(emails, { force });
+  if (token !== healthLoadToken) return;
+
+  for (const r of results) {
+    if (r.error) {
+      customerChip.byEmail.set(r.email, { snapshot: null, error: r.error });
+    } else {
+      customerChip.byEmail.set(r.email, { snapshot: r.snapshot, error: null });
+      // One-time diagnostic log: the full snapshot AND the custom_attribute
+      // keys verbatim, so the user can see exactly what their workspace
+      // stores and we can adjust the field probing list if needed.
+      if (force || ticketChanged) {
+        const snap = r.snapshot;
+        console.log(`[OM/Intercom] ${r.email} →`, snap);
+        const customKeys = Object.keys(snap?.customAttributes || {});
+        if (customKeys.length) {
+          console.log(`[OM/Intercom] ${r.email} custom_attributes keys:`, customKeys);
+        }
+      }
+    }
+  }
+  renderHealthChip();
+}
+
+el("hcRetry")?.addEventListener("click", () => {
+  loadCustomerHealth({ force: true }).catch((e) => {
+    showToast("sidepanelToasts", `Intercom retry failed: ${e.message}`, "err");
+  });
+});
+
+async function checkManualEmail() {
+  const input = el("hcManualEmail");
+  const raw = (input?.value || "").trim();
+  if (!raw) return;
+  // Re-use the same regex used for ticket-page extraction.
+  const m = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(raw);
+  if (!m) {
+    showToast("sidepanelToasts", "That doesn't look like an email.", "err");
+    return;
+  }
+  const email = m[0];
+
+  // Make sure the chip is mounted even if no ticket is open.
+  let cfgKey = "";
+  try {
+    cfgKey = (await getIntercomConfig())?.apiKey || "";
+  } catch { /* ignore */ }
+  if (!cfgKey) {
+    showToast("sidepanelToasts", "Set an Intercom API key in Settings first.", "err");
+    return;
+  }
+
+  if (!customerChip.emails.includes(email)) customerChip.emails.push(email);
+  customerChip.manualEmails.add(email);
+  customerChip.selected = email;
+  customerChip.byEmail.set(email, { loading: true });
+  setChipHidden(false);
+  renderHealthChip();
+  input.value = "";
+
+  try {
+    const results = await loadSnapshotsForEmails([email], { force: true });
+    const r = results[0];
+    if (r.error) {
+      customerChip.byEmail.set(email, { snapshot: null, error: r.error });
+    } else {
+      customerChip.byEmail.set(email, { snapshot: r.snapshot, error: null });
+      console.log(`[OM/Intercom] (manual) ${email} →`, r.snapshot);
+      const customKeys = Object.keys(r.snapshot?.customAttributes || {});
+      if (customKeys.length) {
+        console.log(`[OM/Intercom] (manual) ${email} custom_attributes keys:`, customKeys);
+      }
+    }
+  } catch (e) {
+    customerChip.byEmail.set(email, { snapshot: null, error: e.message });
+  }
+  renderHealthChip();
+}
+
+el("hcManualGo")?.addEventListener("click", () => {
+  checkManualEmail();
+});
+el("hcManualEmail")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    checkManualEmail();
+  }
+});
+el("hcToggle")?.addEventListener("click", () => {
+  customerChip.expanded = !customerChip.expanded;
+  el("hcToggle").setAttribute("aria-expanded", customerChip.expanded ? "true" : "false");
+  el("hcToggle").textContent = customerChip.expanded ? "▴" : "▾";
+  renderHealthChip();
+});
+
+// Expose the selected snapshot for compose().
+function selectedCustomerContext() {
+  const sel = customerChip.selected;
+  if (!sel) return null;
+  const entry = customerChip.byEmail.get(sel);
+  if (!entry?.snapshot?.found) return null;
+  return stringifySnapshot(entry.snapshot);
+}
+
+// ---------- audit / weekly report ----------
+
+el("auditToggle")?.addEventListener("click", () => {
+  const panel = el("auditPanel");
+  if (!panel) return;
+  const open = panel.style.display !== "none";
+  panel.style.display = open ? "none" : "block";
+  if (!open) refreshAuditLiveMetrics().catch(() => {});
+});
+
+let lastValidatedPersonal = null;
+let lastValidatedTeam = null;
+
+function setAuditStatus(id, text, kind = "ok") {
+  const node = el(id);
+  if (!node) return;
+  node.textContent = text;
+  node.className = `status ${kind === "err" ? "error" : "ok"}`;
+}
+
+el("auditPersonalJson")?.addEventListener("input", () => {
+  const raw = el("auditPersonalJson").value;
+  if (!raw.trim()) {
+    lastValidatedPersonal = null;
+    setAuditStatus("auditPersonalStatus", "");
+    return;
+  }
+  const r = parseWpsaJson(raw);
+  if (!r.ok) {
+    lastValidatedPersonal = null;
+    setAuditStatus("auditPersonalStatus", `✗ ${r.errors[0]}`, "err");
+  } else {
+    lastValidatedPersonal = r.normalised;
+    setAuditStatus("auditPersonalStatus", `✓ Parsed · ${r.normalised.totals.conversations} conversations`);
+  }
+});
+
+el("auditTeamJson")?.addEventListener("input", () => {
+  const raw = el("auditTeamJson").value;
+  if (!raw.trim()) {
+    lastValidatedTeam = null;
+    setAuditStatus("auditTeamStatus", "");
+    return;
+  }
+  const r = parseWpsaJson(raw);
+  if (!r.ok) {
+    lastValidatedTeam = null;
+    setAuditStatus("auditTeamStatus", `✗ ${r.errors[0]}`, "err");
+  } else {
+    lastValidatedTeam = r.normalised;
+    setAuditStatus("auditTeamStatus", `✓ Parsed · ${r.normalised.totals.conversations} conversations · ${r.normalised.frictionLeaderboard.length} friction items`);
+  }
+});
+
+async function refreshAuditLiveMetrics() {
+  const drafts = await getAllDrafts();
+  const library = await getAllEntries();
+  const metrics = computeAuditMetrics({ drafts, library });
+  const lib = metrics.library;
+  const sug = metrics.suggestions;
+  el("auditLiveMetrics").innerHTML = `
+    <ul style="margin: 4px 0 0 16px; padding: 0; line-height: 1.7;">
+      <li>Library: <strong>${lib.total}</strong> entries${lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : ""}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
+      <li>Suggestions resolved this week: <strong>${sug.totalResolvedThisWeek}</strong> (${sug.appliedThisWeek} applied · ${sug.rejectedThisWeek} rejected · ${sug.deferredThisWeek} deferred), <strong>${sug.pending}</strong> pending</li>
+      <li>Suggestion strip CTR: <strong>${metrics.suggestionCtr.ratePercent != null ? metrics.suggestionCtr.ratePercent + "%" : "—"}</strong>${metrics.suggestionCtr.total ? ` (${metrics.suggestionCtr.clicked}/${metrics.suggestionCtr.total})` : " (no impressions yet)"}</li>
+      <li>Customer-context coverage: <strong>${metrics.customerContext.ratePercent != null ? metrics.customerContext.ratePercent + "%" : "—"}</strong>${metrics.customerContext.total ? ` (${metrics.customerContext.withContext}/${metrics.customerContext.total} replies)` : ""}</li>
+      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(personal review pattern)</em></li>
+    </ul>`;
+  return metrics;
+}
+
+async function gatherReportInputs() {
+  const drafts = await getAllDrafts();
+  const library = await getAllEntries();
+  const audit = computeAuditMetrics({ drafts, library });
+  const ask = el("auditAsk")?.value || "";
+  return {
+    personalWpsa: lastValidatedPersonal,
+    teamWpsa: lastValidatedTeam,
+    audit,
+    ask
+  };
+}
+
+el("auditGenerate")?.addEventListener("click", async () => {
+  if (!lastValidatedPersonal && !lastValidatedTeam) {
+    setAuditStatus("auditGenerateStatus", "✗ Paste at least one valid WPSA JSON first.", "err");
+    return;
+  }
+  setAuditStatus("auditGenerateStatus", "Generating…");
+  try {
+    const inputs = await gatherReportInputs();
+    const html = buildReportHtml(inputs);
+    const slack = buildSlackSnippet(inputs);
+
+    const meta = inputs.teamWpsa?.meta || inputs.personalWpsa?.meta || {};
+    const stamp = (meta.weekEnd || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, "");
+    const filename = `weekly-support-insights-${stamp}.html`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    try {
+      await navigator.clipboard.writeText(slack);
+      setAuditStatus("auditGenerateStatus", `✓ Downloaded ${filename} · Slack snippet copied to clipboard`);
+      showToast("sidepanelToasts", "Report downloaded · Slack snippet copied", "ok", 6000);
+    } catch (clipErr) {
+      setAuditStatus("auditGenerateStatus", `✓ Downloaded ${filename} · Couldn't copy Slack snippet (use Copy Slack button)`, "err");
+    }
+  } catch (e) {
+    setAuditStatus("auditGenerateStatus", `✗ ${e.message}`, "err");
+  }
+});
+
+el("auditCopySlack")?.addEventListener("click", async () => {
+  try {
+    const inputs = await gatherReportInputs();
+    if (!inputs.personalWpsa && !inputs.teamWpsa && !inputs.audit) {
+      showToast("sidepanelToasts", "Nothing to copy yet.", "err");
+      return;
+    }
+    const slack = buildSlackSnippet(inputs);
+    await navigator.clipboard.writeText(slack);
+    showToast("sidepanelToasts", "Slack snippet copied", "ok");
+  } catch (e) {
+    showToast("sidepanelToasts", `Copy failed: ${e.message}`, "err");
+  }
+});
+
 // ---------- incoming selection (cursor-aware append) ----------
 function applyIncomingSelection(sel) {
   if (!sel?.text) return;
@@ -227,6 +1124,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.last_ticket_opened?.newValue) {
     renderRevisitCard().catch(() => {});
     refreshStepOneSlot().catch(() => {});
+    loadCustomerHealth().catch(() => {});
   }
   if (changes.revisit_pending_action?.newValue) {
     consumeRevisitPendingAction().catch(() => {});
@@ -247,11 +1145,20 @@ el("generateBtn").addEventListener("click", async () => {
     return;
   }
   el("generateBtn").disabled = true;
+  el("suggestionStrip").hidden = true;
   el("output").innerHTML = '<div class="loading">Thinking…</div>';
   setStatus(el("formStatus"), "");
   try {
     const { conversationId, ticketUrl } = await getCurrentTicket();
-    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf });
+    const suggestionLog = lastImpressionIds.length
+      ? {
+          mode: lastImpressionMode,
+          impression_ids: [...lastImpressionIds],
+          clicked_id: lastClickedSuggestionId
+        }
+      : null;
+    const customerContext = selectedCustomerContext();
+    const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf, suggestionLog, customerContext });
     if (result.error) {
       el("output").innerHTML = "";
       setStatus(el("formStatus"), result.error, "error");
@@ -261,14 +1168,18 @@ el("generateBtn").addEventListener("click", async () => {
     state.lastParsed = result.parsed;
     state.lastLibraryEntryId = result.libraryEntryId;
     state.rewriteOf = null;
-    renderOutput(result.parsed, result.provider);
+    renderOutput(result.parsed, result.provider, result.librarySkipped);
     await renderLibraryPicker();
+    // Reset impression state — this generation has been logged.
+    lastImpressionIds = [];
+    lastImpressionMode = null;
+    lastClickedSuggestionId = null;
   } finally {
     el("generateBtn").disabled = false;
   }
 });
 
-el("clearBtn").addEventListener("click", () => {
+el("clearBtn").addEventListener("click", async () => {
   el("draft").value = "";
   el("promptExtra").value = "";
   el("output").innerHTML = "";
@@ -277,6 +1188,9 @@ el("clearBtn").addEventListener("click", () => {
   el("libraryPick").value = "";
   el("libraryPickMeta").textContent = "";
   setStatus(el("formStatus"), "");
+  await setRankerMode("lexical");
+  await syncRankerToggleFromStorage();
+  scheduleSuggestions();
 });
 
 // ---------- render output ----------
@@ -295,7 +1209,7 @@ function plainToHtml(text) {
   }).join("");
 }
 
-function renderOutput(parsed, provider) {
+function renderOutput(parsed, provider, librarySkipped = null) {
   const section = (title, cls, text) => text ? `
     <div class="output-section">
       <h4>${title}</h4>
@@ -306,7 +1220,16 @@ function renderOutput(parsed, provider) {
       </div>
     </div>` : "";
 
+  const banner = parsed.wasParsed === false
+    ? `<div class="parse-warn">⚠ Couldn't parse the model's labels — showing the raw response below. Try again or switch provider.</div>`
+    : "";
+  const piiBanner = librarySkipped?.reason === "pii_detected"
+    ? `<div class="parse-warn">⚠ Library entry not auto-saved — possible PII detected (${librarySkipped.hits.join(", ")}). The two rewrites are still yours to use.</div>`
+    : "";
+
   el("output").innerHTML = `
+    ${banner}
+    ${piiBanner}
     ${section("Reason", "reason", parsed.reason)}
     ${section("Version A — The Polish", "version-a", parsed.versionA)}
     ${section("Version B — The Revamp", "version-b", parsed.versionB)}
@@ -514,29 +1437,187 @@ async function renderSuggestionList() {
   }
   list.innerHTML = pending.map(({ entry, suggestion }) => {
     const a = suggestion.ai_analysis || {};
-    const changes = (a.proposed_changes || []).map((c) =>
+    const change = (a.proposed_changes || [])[0];
+    const changesHtml = (a.proposed_changes || []).map((c) =>
       `<div class="s-change">• <strong>${escapeHtml(c.type)}</strong> → ${escapeHtml(c.value || "")} <em style="color:#78716c">(${escapeHtml(c.reason || "")})</em></div>`
     ).join("");
-    return `
-      <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}">
-        <div class="s-head">${escapeHtml(entry.scenario_title)} — ${escapeHtml(a.summary || "no summary")}</div>
-        ${changes || '<div class="s-change" style="color:#78716c">No structural changes proposed.</div>'}
-        <div class="s-actions">
-          <button class="primary" data-res="accepted">Accept</button>
-          <button data-res="rejected">Reject</button>
-          <button data-res="deferred">Defer</button>
+
+    if (suggestion.status === "needs_manual") {
+      // split_entry handoff: no inline mutation possible, surface a "create new
+      // entry" affordance so the human authors it manually.
+      return `
+        <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}">
+          <div class="s-head">${escapeHtml(entry.scenario_title)} — Needs manual review</div>
+          <div class="s-change" style="color:#92400e">⚠ Proposal: split into a new entry. Reason: ${escapeHtml(change?.reason || "(none)")}.</div>
+          <div class="s-change">Suggested instruction:<br><em>${escapeHtml(change?.value || "")}</em></div>
+          <div class="s-actions">
+            <button class="primary" data-act="prefill">Open as new entry form</button>
+            <button data-act="dismiss">Dismiss</button>
+          </div>
         </div>
+      `;
+    }
+
+    return `
+      <div class="suggestion" data-entry="${entry.id}" data-sug="${suggestion.id}" data-type="${escapeHtml(change?.type || "")}">
+        <div class="s-head">${escapeHtml(entry.scenario_title)} — ${escapeHtml(a.summary || "no summary")}</div>
+        ${changesHtml || '<div class="s-change" style="color:#78716c">No structural changes proposed.</div>'}
+        <div class="s-actions">
+          <button class="primary" data-act="accept">Accept</button>
+          <button data-act="reject">Reject</button>
+          <button data-act="defer">Defer</button>
+        </div>
+        <div class="s-preview" hidden></div>
       </div>
     `;
   }).join("");
 
   list.querySelectorAll(".suggestion").forEach((node) => {
-    node.querySelectorAll("button[data-res]").forEach((btn) => {
+    node.querySelectorAll("button[data-act]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        await resolveSuggestion(node.dataset.entry, node.dataset.sug, btn.dataset.res);
-        renderLibraryPanel();
+        const act = btn.dataset.act;
+        if (act === "reject") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "defer") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "deferred");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "dismiss") {
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "prefill") {
+          // Manual handoff for split_entry: scroll user to the library section
+          // so they can create the new entry by hand. Pre-filling a real form
+          // is a future feature; for now we resolve and surface a toast.
+          await resolveSuggestion(node.dataset.entry, node.dataset.sug, "rejected");
+          showToast("sidepanelToasts",
+            "Open the library list and add a new entry with the suggested instruction.",
+            "ok", 6000);
+          renderLibraryPanel();
+          return;
+        }
+        if (act === "accept") {
+          await openApplyPreview(node);
+          return;
+        }
       });
     });
+  });
+}
+
+async function openApplyPreview(node) {
+  const entryId = node.dataset.entry;
+  const sugId = node.dataset.sug;
+  const preview = node.querySelector(".s-preview");
+  if (!preview) return;
+
+  const entry = await getEntry(entryId);
+  if (!entry) return;
+  const suggestion = (entry.pending_suggestions || []).find((s) => s.id === sugId);
+  if (!suggestion) return;
+  const proposed = suggestion.ai_analysis?.proposed_changes || [];
+  if (!proposed.length) {
+    showToast("sidepanelToasts", "Nothing to apply — no structural change proposed.", "err");
+    return;
+  }
+
+  // Group by type so the preview is readable when the LLM returns several.
+  const refines = proposed.filter((c) => c.type === "refine_instruction");
+  const taxAdds = proposed.filter((c) =>
+    c.type === "new_tone" || c.type === "new_audience" || c.type === "new_goal"
+  );
+  const splits = proposed.filter((c) => c.type === "split_entry");
+  const unknown = proposed.filter((c) =>
+    !["refine_instruction", "new_tone", "new_audience", "new_goal", "split_entry"].includes(c.type)
+  );
+
+  const blocks = [];
+
+  if (refines.length) {
+    const refineList = refines.map((c, i) => `
+      <div class="s-preview-text" style="background:#e6f4ea; margin-top:${i ? 4 : 0}px">
+        <strong>${i + 1}.</strong> ${escapeHtml(c.value || "")}
+        ${c.reason ? `<div class="meta" style="margin-top:2px">— ${escapeHtml(c.reason)}</div>` : ""}
+      </div>`).join("");
+    const lastWinsNote = refines.length > 1
+      ? `<div class="meta" style="margin-top:4px">Last refinement wins (#${refines.length} will become the live instruction). All ${refines.length} count toward rewrites_absorbed.</div>`
+      : "";
+    blocks.push(`
+      <div class="s-preview-block">
+        <div class="s-preview-label">Current instruction:</div>
+        <div class="s-preview-text">${escapeHtml(entry.scenario_instruction || "")}</div>
+      </div>
+      <div class="s-preview-block">
+        <div class="s-preview-label">${refines.length > 1 ? `Proposed refinements (${refines.length})` : "New instruction"}:</div>
+        ${refineList}
+        ${lastWinsNote}
+      </div>`);
+  }
+
+  if (taxAdds.length) {
+    const items = taxAdds.map((c) => {
+      const label = { new_tone: "tone", new_audience: "audience", new_goal: "goal" }[c.type];
+      return `<li>Add ${label}: <strong>${escapeHtml(c.value || "")}</strong>${c.reason ? ` <span class="meta">— ${escapeHtml(c.reason)}</span>` : ""}</li>`;
+    }).join("");
+    blocks.push(`
+      <div class="s-preview-block">
+        <div class="s-preview-label">Taxonomy additions:</div>
+        <ul style="margin:4px 0 0 18px">${items}</ul>
+      </div>`);
+  }
+
+  if (splits.length) {
+    blocks.push(`
+      <div class="s-preview-block" style="color:#92400e">
+        <div class="s-preview-label">Split entry — manual handoff:</div>
+        <div>This suggestion proposes splitting into a new entry. Apply will flag it as <em>needs_manual</em> and you'll create the new entry by hand. Other changes above still apply.</div>
+      </div>`);
+  }
+
+  if (unknown.length) {
+    blocks.push(`
+      <div class="s-preview-block" style="color:#9a3412">
+        <div class="s-preview-label">Skipped (unknown type):</div>
+        <div>${escapeHtml(unknown.map((c) => c.type).join(", "))}</div>
+      </div>`);
+  }
+
+  preview.innerHTML = `
+    <div class="s-preview-header">Apply ${proposed.length === 1 ? "this change" : `these ${proposed.length} changes`}?</div>
+    ${blocks.join("")}
+    <div class="s-actions">
+      <button class="primary s-apply">Apply</button>
+      <button class="s-cancel">Cancel</button>
+    </div>
+  `;
+  preview.hidden = false;
+
+  preview.querySelector(".s-apply").addEventListener("click", async () => {
+    const result = await applySuggestion(entryId, sugId);
+    if (result.applied > 0 && result.status === "needs_manual") {
+      showToast("sidepanelToasts",
+        `Applied ${result.applied} change${result.applied === 1 ? "" : "s"} · 1 flagged for manual handoff.`,
+        "ok");
+    } else if (result.applied > 0) {
+      showToast("sidepanelToasts",
+        `Applied ${result.applied} change${result.applied === 1 ? "" : "s"}.`,
+        "ok");
+    } else if (result.status === "needs_manual") {
+      showToast("sidepanelToasts", "Flagged for manual handoff.", "ok");
+    } else {
+      showToast("sidepanelToasts", `Apply failed: ${result.error || "unknown"}`, "err");
+    }
+    renderLibraryPanel();
+  });
+  preview.querySelector(".s-cancel").addEventListener("click", () => {
+    preview.hidden = true;
+    preview.innerHTML = "";
   });
 }
 
@@ -722,7 +1803,19 @@ async function saveManagerialRewrite(draft) {
     return;
   }
   await updateDraft(draft.id, { outcome: "managerial_rewrite", manager_rewrite_text: text });
-  if (draft.library_entry_id) await bumpScore(draft.library_entry_id, "manager_approved", 5);
+  if (draft.library_entry_id) {
+    await bumpScore(draft.library_entry_id, "manager_approved", 5);
+    // Fire-and-forget: ask the LLM to propose a library refinement based on
+    // what the manager actually changed. Surfaces in the suggestion review
+    // queue. Per lib/suggestions.js, this should not block the UI.
+    proposeSuggestion({
+      entryId: draft.library_entry_id,
+      draftId: draft.id,
+      userOutput: chosenAssistantReply(draft),
+      finalOutput: text,
+      trigger: "managerial_rewrite"
+    }).catch((e) => console.warn("proposeSuggestion failed:", e));
+  }
   setStatus(el("formStatus"), "Logged managerial rewrite (+5, same weight as manager approved).", "ok");
   state.revisitMgrRewriteDraftId = null;
   await focusAssistantPanel();
@@ -892,14 +1985,17 @@ async function handleRevisit(action, draft, conversationId) {
   await renderRevisitCard();
   await consumeRevisitPendingAction();
   await refreshStepOneSlot();
+  loadCustomerHealth().catch(() => {});
   chrome.tabs.onActivated?.addListener?.(() => {
     renderRevisitCard().catch(() => {});
     refreshStepOneSlot().catch(() => {});
+    loadCustomerHealth().catch(() => {});
   });
   chrome.tabs.onUpdated?.addListener?.((_, info) => {
     if (info.url) {
       renderRevisitCard().catch(() => {});
       refreshStepOneSlot().catch(() => {});
+      loadCustomerHealth().catch(() => {});
     }
   });
 })();

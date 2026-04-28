@@ -182,8 +182,6 @@
       font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
     }
     .badge.sent { background: #dcfce7; color: #166534; }
-    .badge.edited { background: #fef3c7; color: #92400e; }
-    .badge.rewrote { background: #fee2e2; color: #991b1b; }
     .badge.none { background: #f3f4f6; color: #6b7280; }
     .badge.quick { background: #e0e7ff; color: #3730a3; }
     .badge.seed { background: #eef2ff; color: #4338ca; }
@@ -212,6 +210,11 @@
     .suggestion .s-head { font-weight: 600; margin-bottom: 4px; color: #78350f; }
     .suggestion .s-change { margin: 4px 0; color: #422006; }
     .suggestion .s-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .suggestion .s-preview { margin-top: 10px; padding: 10px; border-top: 1px dashed #d6d3d1; background: #fffbeb; border-radius: 4px; }
+    .suggestion .s-preview-header { font-weight: 600; margin-bottom: 6px; }
+    .suggestion .s-preview-block { margin: 6px 0; }
+    .suggestion .s-preview-label { font-size: 11px; text-transform: uppercase; color: #78716c; letter-spacing: 0.4px; margin-bottom: 2px; }
+    .suggestion .s-preview-text { padding: 6px 8px; background: #fef3c7; border-radius: 3px; white-space: pre-wrap; font-size: 12px; }
 
     .add-value-link {
       display: inline-block; font-size: 11px; color: var(--primary);
@@ -266,9 +269,102 @@
       resize: vertical;
     }
     .revisit .r-mgrrw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .parse-warn { background: #fef3c7; border: 1px solid #fde68a; color: #92400e; padding: 8px 10px; border-radius: 5px; font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+    .health-chip { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 12px; }
+    .health-chip .hc-tabs { display: flex; gap: 0; padding: 4px 6px 0; border-bottom: 1px solid var(--border); }
+    .health-chip .hc-tab { padding: 5px 8px; font-size: 11px; cursor: pointer; border: none; background: transparent; color: var(--muted); border-bottom: 2px solid transparent; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .health-chip .hc-tab.is-active { color: var(--text); border-bottom-color: var(--primary); }
+    .health-chip .hc-tab.has-error { color: var(--danger); }
+    .health-chip .hc-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+    .health-chip .hc-dot { font-size: 14px; }
+    .health-chip .hc-label { font-weight: 600; color: var(--text); flex-shrink: 0; }
+    .health-chip .hc-summary { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .health-chip .hc-icon { padding: 2px 6px; font-size: 11px; line-height: 1; background: transparent; border: 1px solid transparent; color: var(--muted); }
+    .health-chip .hc-icon:hover { background: #f3f4f6; color: var(--text); border-color: var(--border); }
+    .health-chip .hc-body { padding: 0 10px 10px; border-top: 1px dashed #e5e7eb; }
+    .health-chip .hc-meta-row { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+    .health-chip .hc-meta-row strong { color: var(--text); font-weight: 600; }
+    .health-chip .hc-recent { margin-top: 8px; }
+    .health-chip .hc-recent-title { font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .health-chip .hc-recent-item { font-size: 11px; color: var(--muted); padding: 3px 0; }
+    .health-chip.is-error .hc-label { color: var(--danger); }
+    .health-chip.is-error .hc-summary { color: var(--danger); }
+    .health-chip .hc-why { padding-top: 8px; font-size: 11px; color: var(--text); }
+    .health-chip .hc-why strong { color: var(--primary); }
+    .health-chip .hc-section { margin-top: 10px; }
+    .health-chip .hc-section:first-of-type { margin-top: 8px; }
+    .health-chip .hc-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+    .health-chip .hc-manual { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); background: #fafafa; }
+    .health-chip .hc-manual input { flex: 1; padding: 5px 8px; font-size: 12px; }
+    .health-chip .hc-manual button { padding: 5px 10px; font-size: 12px; }
+    .health-chip .hc-tab.is-manual::before { content: "✎ "; color: var(--muted); }
+    .suggestion-strip { margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+    .suggestion-strip .ss-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .suggestion-strip .ss-title { font-weight: 600; color: var(--text); }
+    .suggestion-strip .ss-rankers { color: var(--muted); display: flex; gap: 8px; align-items: center; }
+    .suggestion-strip .ss-rankers label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+    .suggestion-strip .ss-body { padding: 4px 0; }
+    .suggestion-strip .ss-row {
+      display: flex; flex-direction: column; align-items: stretch;
+      padding: 0; border-bottom: 1px solid #f3f4f6;
+    }
+    .suggestion-strip .ss-row:last-child { border-bottom: none; }
+    .suggestion-strip .ss-row-line {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    }
+    .suggestion-strip .ss-row.is-top .ss-star { opacity: 1; }
+    .suggestion-strip .ss-star { width: 14px; opacity: 0.25; font-size: 12px; flex-shrink: 0; }
+    .suggestion-strip .ss-caret {
+      width: 18px; flex-shrink: 0; padding: 0; margin: 0; border: none; background: transparent;
+      font-size: 11px; line-height: 1; color: var(--muted); cursor: pointer; border-radius: 3px;
+    }
+    .suggestion-strip .ss-caret:hover { color: var(--text); background: #f3f4f6; }
+    .suggestion-strip .ss-expand {
+      padding: 8px 10px 10px 38px; border-top: 1px dashed #e5e7eb;
+      font-size: 11px; color: var(--muted); background: #fafafa;
+    }
+    .suggestion-strip .ss-expand-label {
+      font-weight: 600; color: #374151; display: block; margin-top: 8px;
+    }
+    .suggestion-strip .ss-expand-block:first-child .ss-expand-label { margin-top: 0; }
+    .suggestion-strip .ss-expand-instruction {
+      white-space: pre-wrap; color: var(--text); margin-top: 3px; font-size: 11px; line-height: 1.45;
+    }
+    .suggestion-strip .ss-expand-sets,
+    .suggestion-strip .ss-expand-score { margin-top: 3px; line-height: 1.45; }
+    .suggestion-strip .ss-text { flex: 1; min-width: 0; }
+    .suggestion-strip .ss-text-title { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .suggestion-strip .ss-text-summary { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .suggestion-strip .ss-score { font-size: 10px; color: var(--muted); padding: 2px 5px; border: 1px solid var(--border); border-radius: 3px; flex-shrink: 0; }
+    .suggestion-strip .ss-use { font-size: 11px; padding: 4px 9px; flex-shrink: 0; }
+    .suggestion-strip .ss-empty { padding: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+    .suggestion-strip .ss-empty.is-error { color: #b00020; }
+    .suggestion-strip .ss-foot { padding: 6px 10px; border-top: 1px solid var(--border); }
+    .toasts { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 9999; pointer-events: none; }
+    .toast { pointer-events: auto; padding: 9px 28px 9px 12px; border-radius: 6px; font-size: 12px; line-height: 1.4; box-shadow: 0 3px 10px rgba(0,0,0,0.18); position: relative; cursor: pointer; }
+    .toast--ok { background: #e6f4ea; color: #0a7c2f; border: 1px solid #a6dab2; }
+    .toast--err { background: #fce8e6; color: #b00020; border: 1px solid #f1b1ae; }
+    .toast__close { position: absolute; top: 4px; right: 6px; font-size: 14px; line-height: 1; opacity: 0.6; }
   </style>
 </head>
 <body>
+  <div id="sidepanelToasts" class="toasts" aria-live="polite"></div>
+
+  <div id="customerHealth" class="health-chip" hidden>
+    <div class="hc-tabs" id="hcTabs" hidden></div>
+    <div class="hc-header">
+      <span class="hc-dot" id="hcDot">⚪</span>
+      <span class="hc-label" id="hcLabel">Loading…</span>
+      <span class="hc-summary" id="hcSummary"></span>
+      <button type="button" id="hcRetry" class="hc-icon" title="Refresh">↻</button>
+      <button type="button" id="hcToggle" class="hc-icon" aria-expanded="false" title="Show details">▾</button>
+    </div>
+    <div class="hc-body" id="hcBody" hidden></div>
+    <div class="hc-manual">
+      <input type="email" id="hcManualEmail" placeholder="Check another email…" autocomplete="off" />
+      <button type="button" id="hcManualGo" class="primary">Check</button>
+    </div>
+  </div>
 
   <button type="button" id="toggleSettings" class="settings-toggle">&#9881; Settings</button>
 
@@ -289,13 +385,32 @@
       <label for="defaultProvider">Default provider</label>
       <select id="defaultProvider"></select>
     </div>
+    <div class="field">
+      <label for="intercomKey">Intercom API key</label>
+      <input type="password" id="intercomKey" autocomplete="off" placeholder="dG9rOj..." />
+      <div class="meta">Used for the customer health chip on ticket pages. US workspace only.</div>
+    </div>
     <div class="btn-row">
+      <button id="testIntercom">Test Intercom</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
       <button id="saveSettings" class="primary">Save</button>
-      <button id="exportLibrary">Export templates</button>
-      <button id="importLibrary">Import…</button>
+      <button id="exportLibrary">Export library</button>
+      <button id="importLibrary">Import library…</button>
+      <button id="resetLibrary">Reset to seeds</button>
       <input type="file" id="importFile" accept=".json" style="display:none" />
     </div>
     <div class="status" id="settingsStatus"></div>
+    <div id="importConfirm" class="import-confirm" hidden style="margin-top:10px; padding:10px; border:1px solid #e0e0e0; border-radius:6px; background:#fafafa;">
+      <div id="importSummary" style="font-size:12px; line-height:1.5; margin-bottom:8px;"></div>
+      <div class="btn-row">
+        <button id="importMerge" class="primary">Merge new only</button>
+        <button id="importReplace">Replace all</button>
+        <button id="importCancel">Cancel</button>
+      </div>
+      <div id="importMergeHint" class="meta" style="margin-top:6px;"></div>
+      <div id="importReplaceHint" class="meta" style="color:#b00020;"></div>
+    </div>
   </div>
 
   <h2>OM Support Assistant</h2>
@@ -369,6 +484,19 @@
 
   <div id="revisitCard" style="display:none"></div>
 
+  <div id="suggestionStrip" class="suggestion-strip" hidden>
+    <div class="ss-header">
+      <span class="ss-title">Library suggestions</span>
+      <span class="ss-rankers">
+        Ranker:
+        <label><input type="radio" name="rankerMode" value="lexical" /> Lex</label>
+        <label><input type="radio" name="rankerMode" value="llm" /> LLM</label>
+      </span>
+    </div>
+    <div class="ss-body" id="ssBody"></div>
+    <div class="ss-foot meta" id="ssFoot"></div>
+  </div>
+
   <button id="generateBtn" class="primary full">Generate reply</button>
   <div style="height: 8px"></div>
   <div class="btn-row">
@@ -379,6 +507,34 @@
 
   <div id="output" style="margin-top: 16px"></div>
   <div id="stepOneSlot" style="display: none"></div>
+
+  <button type="button" class="history-toggle" id="auditToggle">
+    <span>Weekly audit &amp; report</span>
+    <span>&#9662;</span>
+  </button>
+  <div id="auditPanel" class="card" style="display:none">
+    <h3 style="margin-top:0">Section 1 — My personal stats from WPSA</h3>
+    <p class="meta" style="margin-top:-4px">Run the WPSA prompt with the filter set to <em>my tickets only</em>, paste the JSON below.</p>
+    <textarea id="auditPersonalJson" rows="6" style="font-family: ui-monospace, monospace; font-size: 11px;" placeholder="Paste personal WPSA JSON here…"></textarea>
+    <div id="auditPersonalStatus" class="status"></div>
+
+    <h3>Section 2 — AI loop metrics (live, from this extension)</h3>
+    <div id="auditLiveMetrics" class="meta">Computed from your local <code>draft_log</code> + <code>library_v3</code>.</div>
+
+    <h3>Section 3 — Team customer insights</h3>
+    <p class="meta" style="margin-top:-4px">Run the WPSA prompt with the filter set to <em>the whole team</em>, paste below.</p>
+    <textarea id="auditTeamJson" rows="6" style="font-family: ui-monospace, monospace; font-size: 11px;" placeholder="Paste team WPSA JSON here…"></textarea>
+    <div id="auditTeamStatus" class="status"></div>
+
+    <h3>This week's ask (optional)</h3>
+    <input type="text" id="auditAsk" placeholder="One concrete request to product / team this week…" />
+
+    <div class="btn-row" style="margin-top:12px">
+      <button id="auditGenerate" class="primary">Generate weekly report</button>
+      <button id="auditCopySlack">Copy Slack snippet</button>
+    </div>
+    <div id="auditGenerateStatus" class="status"></div>
+  </div>
 
   <button type="button" class="history-toggle" id="libraryToggle">
     <span id="libraryToggleLabel">Library &amp; learning</span>

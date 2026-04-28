@@ -195,6 +195,18 @@ Kill dead branches so the mental model matches the code.
 
 ---
 
+### D4 — `chrome.sidePanel.open` user-gesture violation
+
+**Why**: Console shows `sidePanel.open() may only be called in response to a user gesture`. The `await chrome.storage.local.set(...)` in `handleSendToAssistant` runs before `chrome.sidePanel.open()` and breaks the gesture chain, so Chrome rejects the open call. Currently swallowed by try/catch — selection still lands, the panel just doesn't auto-open.
+
+**Files**: [background.js](../background.js) — `handleSendToAssistant` (~line 75–91).
+
+**What to do**: Reorder. Call `chrome.sidePanel.open({ windowId })` synchronously inside the gesture window (before any `await`), then run the storage write. The side panel picks up `incoming_selection` via the storage change event a moment later.
+
+**Test**: With side panel closed, right-click selected text → "Send to Assistant" → panel opens. Console shows no `sidePanel.open failed` warning.
+
+---
+
 ## Phase E — Polish
 
 ### E1 — Safe `scenario_title` truncation
