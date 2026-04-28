@@ -390,6 +390,11 @@
       <input type="password" id="intercomKey" autocomplete="off" placeholder="dG9rOj..." />
       <div class="meta">Used for the customer health chip on ticket pages. US workspace only.</div>
     </div>
+    <div class="field">
+      <label for="reportAuthorName">Your name (for reports)</label>
+      <input type="text" id="reportAuthorName" autocomplete="off" placeholder="e.g. Nwachukwu Okafor" />
+      <div class="meta">Used as the report author and as the default agent in the WPSA prompt builder.</div>
+    </div>
     <div class="btn-row">
       <button id="testIntercom">Test Intercom</button>
     </div>
@@ -513,7 +518,38 @@
     <span>&#9662;</span>
   </button>
   <div id="auditPanel" class="card" style="display:none">
-    <h3 style="margin-top:0">Section 1 — My personal stats from WPSA</h3>
+    <h3 style="margin-top:0">Build WPSA prompt</h3>
+    <p class="meta" style="margin-top:-4px">Set the dates, scope, and analysed agent. Click Generate, then Copy and paste into the WPSA AI chat.</p>
+    <div class="row">
+      <div class="field">
+        <label for="promptScope">Scope</label>
+        <select id="promptScope">
+          <option value="personal">Personal</option>
+          <option value="team">Team</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="promptWeekStart">From</label>
+        <input type="date" id="promptWeekStart" />
+      </div>
+      <div class="field">
+        <label for="promptWeekEnd">To</label>
+        <input type="date" id="promptWeekEnd" />
+      </div>
+    </div>
+    <div class="field">
+      <label for="promptAgent">Analyse tickets for</label>
+      <input type="text" id="promptAgent" placeholder="Your name, a teammate's name, or 'Team'" />
+      <div class="meta">Defaults to your name (Personal scope) or "Team". Editable to prepare a report for someone else.</div>
+    </div>
+    <div class="btn-row">
+      <button id="promptGenerate" class="primary">Generate prompt</button>
+      <button id="promptCopy">Copy prompt</button>
+    </div>
+    <textarea id="promptOutput" rows="8" readonly style="font-family: ui-monospace, monospace; font-size: 11px; margin-top: 8px; background: #f9fafb;" placeholder="Click Generate prompt to build it…"></textarea>
+    <div id="promptStatus" class="status"></div>
+
+    <h3 style="margin-top:18px">Section 1 — My personal stats from WPSA</h3>
     <p class="meta" style="margin-top:-4px">Run the WPSA prompt with the filter set to <em>my tickets only</em>, paste the JSON below.</p>
     <textarea id="auditPersonalJson" rows="6" style="font-family: ui-monospace, monospace; font-size: 11px;" placeholder="Paste personal WPSA JSON here…"></textarea>
     <div id="auditPersonalStatus" class="status"></div>

@@ -31,6 +31,9 @@ const goodPayload = {
   },
   oiVerdict: {
     frictionPoint: "Kit Integration Lead Sync",
+    primaryGrowthLever: "churn",
+    mveBootstrap: "Add a saved-reply that explains Double Opt-in before escalating.",
+    escalationVerdict: "playbook_only",
     outcomeHoursSavedPerWeek: 1.5, inputEffort: "low",
     verdict: "yes", condition: null, rationale: "Clarify…"
   },
@@ -127,6 +130,40 @@ describe("validateWpsaShape — enum coverage", () => {
     const r = validateWpsaShape(bad);
     expect(r.ok).toBe(false);
     expect(r.errors[0]).toMatch(/verdict/);
+  });
+
+  it("rejects unknown primaryGrowthLever", () => {
+    const bad = JSON.parse(JSON.stringify(goodPayload));
+    bad.oiVerdict.primaryGrowthLever = "marketing";
+    const r = validateWpsaShape(bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatch(/primaryGrowthLever/);
+  });
+
+  it("rejects unknown escalationVerdict", () => {
+    const bad = JSON.parse(JSON.stringify(goodPayload));
+    bad.oiVerdict.escalationVerdict = "maybe-later";
+    const r = validateWpsaShape(bad);
+    expect(r.ok).toBe(false);
+    expect(r.errors[0]).toMatch(/escalationVerdict/);
+  });
+
+  it("normalises missing mveBootstrap to null", () => {
+    const minimalOI = JSON.parse(JSON.stringify(goodPayload));
+    delete minimalOI.oiVerdict.mveBootstrap;
+    const r = validateWpsaShape(minimalOI);
+    expect(r.ok).toBe(true);
+    expect(r.normalised.oiVerdict.mveBootstrap).toBeNull();
+  });
+
+  it("normalises missing primaryGrowthLever / escalationVerdict to null", () => {
+    const minimalOI = JSON.parse(JSON.stringify(goodPayload));
+    delete minimalOI.oiVerdict.primaryGrowthLever;
+    delete minimalOI.oiVerdict.escalationVerdict;
+    const r = validateWpsaShape(minimalOI);
+    expect(r.ok).toBe(true);
+    expect(r.normalised.oiVerdict.primaryGrowthLever).toBeNull();
+    expect(r.normalised.oiVerdict.escalationVerdict).toBeNull();
   });
 
   it("rejects unknown scope", () => {

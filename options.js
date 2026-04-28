@@ -6,7 +6,9 @@ import {
   getAvailableProviders,
   getAllDrafts,
   getIntercomConfig,
-  setIntercomConfig
+  setIntercomConfig,
+  getReportConfig,
+  setReportConfig
 } from "./lib/storage.js";
 import {
   getAllEntries,
@@ -29,8 +31,19 @@ async function init() {
   el("openai-key").value = keys.openai || "";
   const intercom = await getIntercomConfig();
   el("intercom-key").value = intercom.apiKey || "";
+  const report = await getReportConfig();
+  if (el("report-author-name")) el("report-author-name").value = report.agentName || "";
   await refreshDefaultProviderOptions();
 }
+
+el("save-report")?.addEventListener("click", async () => {
+  const agentName = el("report-author-name").value.trim();
+  await setReportConfig({ agentName });
+  const node = el("report-status");
+  node.textContent = agentName ? `Saved: ${agentName}` : "Cleared.";
+  node.style.color = "#0a7c2f";
+  showToast("toasts", agentName ? `Report author saved: ${agentName}` : "Report author cleared.", "ok");
+});
 
 function setIntercomStatus(text, kind = "ok") {
   const node = el("intercom-status");

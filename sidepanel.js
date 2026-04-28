@@ -7,8 +7,10 @@ import {
   getUnresolvedDeliveredByConversation,
   draftIsRevisitPending,
   getRankerMode, setRankerMode,
-  getIntercomConfig, setIntercomConfig
+  getIntercomConfig, setIntercomConfig,
+  getReportConfig, setReportConfig
 } from "./lib/storage.js";
+import { buildWpsaPrompt, previousMondayToSunday } from "./lib/prompt-generator.js";
 import {
   makeIntercomClient,
   detectTimestamp,
@@ -120,6 +122,8 @@ async function loadSettings() {
   el("openaiKey").value = keys.openai || "";
   const intercom = await getIntercomConfig();
   if (el("intercomKey")) el("intercomKey").value = intercom.apiKey || "";
+  const report = await getReportConfig();
+  if (el("reportAuthorName")) el("reportAuthorName").value = report.agentName || "";
   await refreshProviderSelects();
 }
 
@@ -318,6 +322,8 @@ el("saveSettings").addEventListener("click", async () => {
   if (chosen && chosen !== "— no providers configured —") await setDefaultProvider(chosen);
   const intercomKey = el("intercomKey")?.value?.trim() || "";
   await setIntercomConfig({ apiKey: intercomKey });
+  const reportAuthor = el("reportAuthorName")?.value?.trim() || "";
+  await setReportConfig({ agentName: reportAuthor });
   await refreshProviderSelects();
   setStatus(el("settingsStatus"), "Saved.", "ok");
   setTimeout(() => setStatus(el("settingsStatus"), ""), 1500);
@@ -963,12 +969,82 @@ function selectedCustomerContext() {
 
 // ---------- audit / weekly report ----------
 
-el("auditToggle")?.addEventListener("click", () => {
+el("auditToggle")?.addEventListener("click", async () => {
   const panel = el("auditPanel");
   if (!panel) return;
   const open = panel.style.display !== "none";
   panel.style.display = open ? "none" : "block";
-  if (!open) refreshAuditLiveMetrics().catch(() => {});
+  if (!open) {
+    refreshAuditLiveMetrics().catch(() => {});
+    await initPromptBuilder();
+  }
+});
+
+// ---------- prompt builder ----------
+
+async function initPromptBuilder() {
+  const startEl = el("promptWeekStart");
+  const endEl = el("promptWeekEnd");
+  const scopeEl = el("promptScope");
+  const agentEl = el("promptAgent");
+  if (!startEl || !endEl || !scopeEl || !agentEl) return;
+  // Default dates to last full Mon–Sun unless the user has already typed.
+  if (!startEl.value || !endEl.value) {
+    const { weekStart, weekEnd } = previousMondayToSunday();
+    startEl.value = weekStart;
+    endEl.value = weekEnd;
+  }
+  // Default agent based on scope + saved name.
+  const cfg = await getReportConfig();
+  if (!agentEl.value) {
+    agentEl.value = scopeEl.value === "team" ? "Team" : (cfg.agentName || "");
+  }
+}
+
+function autoFillAgentForScope() {
+  const scope = el("promptScope")?.value || "personal";
+  const agentEl = el("promptAgent");
+  if (!agentEl) return;
+  // Auto-fill ONLY when the field looks "untouched" — empty, "Team", or
+  // matching the saved author name. Preserves user edits to teammate names.
+  getReportConfig().then((cfg) => {
+    const known = [cfg.agentName || "", "Team", ""].filter(Boolean);
+    if (!agentEl.value || known.includes(agentEl.value)) {
+      agentEl.value = scope === "team" ? "Team" : (cfg.agentName || "");
+    }
+  });
+}
+
+el("promptScope")?.addEventListener("change", autoFillAgentForScope);
+
+el("promptGenerate")?.addEventListener("click", () => {
+  try {
+    const prompt = buildWpsaPrompt({
+      scope: el("promptScope").value,
+      weekStart: el("promptWeekStart").value,
+      weekEnd: el("promptWeekEnd").value,
+      agent: el("promptAgent").value
+    });
+    el("promptOutput").value = prompt;
+    setAuditStatus("promptStatus", "✓ Prompt generated. Click Copy and paste into WPSA AI.");
+  } catch (e) {
+    setAuditStatus("promptStatus", `✗ ${e.message}`, "err");
+  }
+});
+
+el("promptCopy")?.addEventListener("click", async () => {
+  const text = el("promptOutput")?.value || "";
+  if (!text.trim()) {
+    setAuditStatus("promptStatus", "Generate the prompt first.", "err");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setAuditStatus("promptStatus", "✓ Prompt copied. Paste it into WPSA AI.");
+    showToast("sidepanelToasts", "Prompt copied", "ok");
+  } catch (e) {
+    setAuditStatus("promptStatus", `✗ Copy failed: ${e.message}`, "err");
+  }
 });
 
 let lastValidatedPersonal = null;
@@ -1037,11 +1113,13 @@ async function gatherReportInputs() {
   const library = await getAllEntries();
   const audit = computeAuditMetrics({ drafts, library });
   const ask = el("auditAsk")?.value || "";
+  const cfg = await getReportConfig();
   return {
     personalWpsa: lastValidatedPersonal,
     teamWpsa: lastValidatedTeam,
     audit,
-    ask
+    ask,
+    reportAuthor: cfg.agentName || ""
   };
 }
 

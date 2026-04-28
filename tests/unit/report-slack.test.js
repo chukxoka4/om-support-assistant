@@ -21,7 +21,14 @@ const team = {
     { rank: 1, name: "Refunds", conversations: 38, messages: 45, sentiment: "frustrated" },
     { rank: 2, name: "Mobile sep", conversations: 25 }
   ],
-  oiVerdict: { frictionPoint: "Refunds", outcomeHoursSavedPerWeek: 4.5, inputEffort: "low", verdict: "yes", rationale: "Doc fix." },
+  oiVerdict: {
+    frictionPoint: "Refunds",
+    primaryGrowthLever: "churn",
+    mveBootstrap: "Add a refund-policy saved-reply.",
+    escalationVerdict: "escalate",
+    outcomeHoursSavedPerWeek: 4.5, inputEffort: "low",
+    verdict: "yes", rationale: "Doc fix."
+  },
   timeWaster: { topic: "Free plan pitch", occurrences: 4 },
   knowledgeGaps: [{ topic: "Kit sync" }],
   caveats: ["Sample size n=4."]
@@ -62,8 +69,29 @@ describe("buildSlackSnippet", () => {
   it("section 3 leads with the #1 friction point", () => {
     const out = buildSlackSnippet({ teamWpsa: team });
     expect(out).toContain("#1 friction: *Refunds*");
-    expect(out).toContain("YES");
+    expect(out).toContain("ESCALATE");
     expect(out).toContain("Doc fix.");
+  });
+
+  it("section 3 surfaces growth lever and bootstrap line", () => {
+    const out = buildSlackSnippet({ teamWpsa: team });
+    expect(out).toContain("Lever: *churn*");
+    expect(out).toContain("Bootstrap option:");
+    expect(out).toContain("Add a refund-policy saved-reply.");
+  });
+
+  it("header shows About / prepared by when names differ", () => {
+    const out = buildSlackSnippet({
+      personalWpsa: { ...personal, meta: { ...personal.meta, agent: "Erica Franz" } },
+      reportAuthor: "Nwachukwu Okafor"
+    });
+    expect(out).toContain("About Erica Franz · prepared by Nwachukwu Okafor");
+  });
+
+  it("header collapses to 'By <author>' when matching", () => {
+    const out = buildSlackSnippet({ personalWpsa: personal, reportAuthor: "Nwachukwu Okafor" });
+    expect(out).toContain("By Nwachukwu Okafor");
+    expect(out).not.toContain("prepared by");
   });
 
   it("ask shows up at the end when present", () => {
