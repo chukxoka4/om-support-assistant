@@ -485,6 +485,118 @@ About a day of focused work. 261 tests stay green; +25 new tests; total ~286.
 
 ---
 
+## F7 — Orphaned-draft finder + manual relink button
+
+### Vision
+
+Every once in a while a draft lands in `draft_log` without a `conversation_id` —
+either from a historical bug (e.g. the multi-window `currentWindow: true`
+race) or because the user composed without an OM ticket open. Today the only
+way to find and relink them is a console snippet. F7 surfaces this as an
+in-extension UI: list orphans with enough detail to identify each, paste a
+ticket URL, click Link.
+
+### Surfaces
+
+A small **Orphaned drafts** card inside the existing **Library & learning**
+panel, between *Recent drafts* and the suggestion review queue. Hidden when
+zero orphans exist (no clutter for the common case).
+
+```
+┌─ Orphaned drafts ─────────────────────────── [3] ─┐
+│ Compose drafts with no ticket link.                │
+│                                                    │
+│ ┌─ 2026-04-29 09:58 (40m) · OptinMonster ───────┐ │
+│ │ Explain Technical Issue · VIP · Direct ·       │ │
+│ │ technical · claude · delivery: copy            │ │
+│ │ "Hi Alberto, Thanks for reaching out to us…"   │ │
+│ │ [ Ticket URL: ___________________ ] [ Link ]   │ │
+│ └────────────────────────────────────────────────┘ │
+│ ┌─ 2026-04-12 16:22 (17d) · TrustPulse ──────────┐│
+│ │ ...                                              ││
+│ └────────────────────────────────────────────────┘│
+└───────────────────────────────────────────────────┘
+```
+
+Each card shows enough to identify which orphan is which: timestamp + age,
+product, dropdowns, provider, current delivery / outcome state, and a 200-
+char snippet of both the rough draft input and the polished Version A.
+
+A single inline input takes the OM ticket URL. Clicking **Link** validates
+it against the `/conversation/<id>` regex, attaches `conversation_id` and
+`ticket_url` to the record, and removes the card from the list. If the
+draft already has a `conversation_id` (race-edited from another panel), a
+status line warns and refuses to overwrite.
+
+### Layers and files
+
+#### Service (new) — `lib/orphan-recovery.js`
+Pure module. No DOM, no Chrome APIs.
+- `findOrphans(drafts)` → `[{ idx, draft }]` — compose-only, `conversation_id`
+  null. Excludes quick-retone / quick-translate.
+- `linkOrphanToTicket(drafts, idx, ticketUrl)` → `{ ok, error?, drafts? }`.
+  Pure transform. Validates URL, guards against overwrite, returns a new
+  array (or error) without touching storage. The entry point calls
+  `updateDraft` (already in `lib/storage.js`) to persist.
+
+#### Repository — [lib/storage.js](../lib/storage.js)
+No new helpers. `updateDraft(id, patch)` already supports the relink.
+
+#### Entry point — [sidepanel.html](../sidepanel.html), [sidepanel.js](../sidepanel.js)
+- New section in the library panel — `<div id="orphansSection">` — rendered
+  by a new `renderOrphans()` function that lives next to `renderRecentDrafts`.
+- Each card shows the identifying snippets and a small inline form
+  (URL input + Link button).
+- The Link handler:
+  1. Reads the input value.
+  2. Calls `linkOrphanToTicket(allDrafts, idx, url)` (pure).
+  3. If `ok`, calls `updateDraft(draftId, { conversation_id, ticket_url })`.
+  4. Re-renders the orphans section.
+  5. Surfaces a toast — *"Linked draft to ticket #41816"* — and re-renders
+     the revisit card so the linked draft becomes actionable immediately.
+
+### Tracking
+
+No new tracking. The relink is just a data correction.
+
+### Tests
+
+- `tests/unit/orphan-recovery.test.js` (~10):
+  - `findOrphans` filters compose drafts with no conversation_id.
+  - Excludes quick-retone / quick-translate (no conversation_id by design).
+  - Excludes drafts that already have a conversation_id.
+  - `linkOrphanToTicket` validates the URL regex.
+  - Refuses to overwrite an already-linked draft.
+  - Returns labelled errors for missing index, malformed URL.
+  - Successful path returns a new drafts array with conversation_id and
+    ticket_url set on the targeted draft and no other entry mutated.
+- `tests/ui/sidepanel-orphans.test.js` (~3 happy-dom):
+  - Section is hidden when no orphans exist.
+  - Renders one card per orphan with the expected snippet.
+  - Clicking Link with a valid URL calls `updateDraft` and removes the card.
+
+About **+13 new test assertions**.
+
+### Out of scope
+
+- Bulk relink (e.g. "link all my orphans to this URL"). Each draft is its
+  own ticket; per-row is correct.
+- Auto-suggesting a ticket for the orphan (we'd need fuzzy matching against
+  ticket history — too speculative).
+- Showing orphans across `quick-retone` / `quick-translate` (those have no
+  ticket by design — listing them would just be noise).
+
+### Effort
+
+About **2 hours** including tests. Self-contained — no schema changes, no
+storage migration, no new permissions.
+
+### Order
+
+Independent of every other F* feature. Ship whenever convenient.
+
+---
+
 ## Order of execution
 
 ```
@@ -499,6 +611,8 @@ F4 (synthesis)
 F5 (TrustPulse / Beacon product toggle) — small follow-up
   ↓
 F6 (rich-text editor) — independently sequenceable, doesn't block F3/F4
+  ↓
+F7 (orphaned-draft finder + relink button) — small, independent, drop-in any time
 ```
 
 F1 shipped first because the suggestions strip needs no new dependencies and
