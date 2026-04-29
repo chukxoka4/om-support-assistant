@@ -51,8 +51,36 @@ const state = {
   /** Hide revisit UI for this conversation until you open a different ticket (session only). */
   revisitHiddenConversationId: null,
   /** Managerial rewrite textarea open for this draft id. */
-  revisitMgrRewriteDraftId: null
+  revisitMgrRewriteDraftId: null,
+  /** Cached window id — pinned at panel mount so tab queries scope to the
+   *  side panel's own window rather than the most-recently-focused one.
+   *  Eliminates the cross-monitor race where the query returned a tab from
+   *  a different window and a draft was logged with conversation_id null. */
+  windowId: null
 };
+
+/** Resolve the side panel's own window id once and cache it. Subsequent
+ *  tab queries pass windowId: state.windowId instead of currentWindow:true. */
+async function ensureWindowId() {
+  if (state.windowId != null) return state.windowId;
+  try {
+    const w = await chrome.windows.getCurrent();
+    if (w?.id != null) state.windowId = w.id;
+  } catch {
+    /* leave null — query falls back to currentWindow:true */
+  }
+  return state.windowId;
+}
+
+/** Tab-query wrapper that prefers the cached windowId when available. */
+async function queryActiveTabInOwnWindow() {
+  const wid = await ensureWindowId();
+  const filter = wid != null
+    ? { active: true, windowId: wid }
+    : { active: true, currentWindow: true };
+  const [tab] = await chrome.tabs.query(filter);
+  return tab || null;
+}
 
 // Track which of the two input fields was focused last, for routing
 // "Send to Draft/Prompt" context-menu actions when focus has drifted.
@@ -830,7 +858,7 @@ async function loadCustomerHealth({ force = false } = {}) {
   if (!conversationId) { setChipHidden(true); return; }
   if (token !== healthLoadToken) return;
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await queryActiveTabInOwnWindow();
   if (!tab?.id) { setChipHidden(true); return; }
 
   const emails = await getCustomerEmailsFromPage(tab.id);
@@ -1228,6 +1256,16 @@ el("generateBtn").addEventListener("click", async () => {
   setStatus(el("formStatus"), "");
   try {
     const { conversationId, ticketUrl } = await getCurrentTicket();
+    if (!conversationId) {
+      // Warn loudly: the draft will land without a ticket link. Future revisit
+      // card / Step 1 / Step 2 won't appear unless relinked via F7.
+      showToast(
+        "sidepanelToasts",
+        "⚠ No OM ticket detected — draft will be logged without a link. Open the ticket page in this window first if you want the revisit flow.",
+        "err",
+        8000
+      );
+    }
     const suggestionLog = lastImpressionIds.length
       ? {
           mode: lastImpressionMode,
@@ -1368,7 +1406,7 @@ async function copyVersion(key) {
 async function insertVersion(key) {
   const html = versionHtml(key);
   if (!html) return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await queryActiveTabInOwnWindow();
   if (!tab?.id) return;
   try {
     const [result] = await chrome.scripting.executeScript({
@@ -1725,7 +1763,7 @@ function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 
 async function getCurrentTicket() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await queryActiveTabInOwnWindow();
     if (!tab?.url) return { conversationId: null, ticketUrl: null };
     const m = tab.url.match(/^https:\/\/om\.wpsiteassist\.com\/conversation\/(\d+)/);
     return { conversationId: m ? m[1] : null, ticketUrl: tab.url };
@@ -2056,6 +2094,7 @@ async function handleRevisit(action, draft, conversationId) {
 
 // ---------- init ----------
 (async function init() {
+  await ensureWindowId();
   await loadSettings();
   await renderDropdowns();
   await renderLibraryPicker();

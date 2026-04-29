@@ -597,6 +597,60 @@ Independent of every other F* feature. Ship whenever convenient.
 
 ---
 
+## F8 — Single-writer for `draft_log` (concurrency hardening)
+
+### Vision
+
+Today, `lib/storage.js` `logDraft` and `updateDraft` both follow the
+read-modify-write pattern: read the whole `draft_log` array from
+`chrome.storage.local`, mutate, write back. With two side panels active
+across two windows, two concurrent writes can race — the later writer's
+`set()` overwrites the array snapshot the earlier writer based its
+modification on, silently dropping the earlier change.
+
+This bug class is real but is **not what bit on 2026-04-29** — that
+incident was the `currentWindow:true` race (fixed). F8 is preventative
+hardening for the day a concurrent-write race actually fires.
+
+### Layers and files
+
+#### Entry point — [background.js](../background.js)
+Acts as the single writer. Listens for `chrome.runtime.onMessage` of
+type `draft.log` / `draft.update` / `draft.relink`. Each message is
+queued onto a per-key promise chain so writes serialise. Background
+then calls the storage helpers directly (no inner race because there's
+only one writer).
+
+#### Repository — [lib/storage.js](../lib/storage.js)
+- `logDraft(record)` becomes a thin wrapper that does
+  `chrome.runtime.sendMessage({ type: "draft.log", record })` instead
+  of touching storage directly. Same for `updateDraft`.
+- Reads stay direct (`getAllDrafts`, `getDraftsByConversation`) — they
+  can't race.
+
+#### Tests
+- `tests/integration/draft-log-concurrency.test.js` — fires N concurrent
+  `logDraft` calls; asserts every record is present in the final array.
+- Existing storage tests stay green; they hit the same wrappers.
+
+### Effort
+
+About **2 hours** + tests. Low risk: messaging adds ~5–10ms latency on
+writes. Reads unchanged.
+
+### Out of scope
+
+- Full transactional storage (e.g. IndexedDB). Overkill for our scale.
+- Cross-window state replication beyond `draft_log` (no other key has
+  the same RMW pattern at the moment).
+
+### Order
+
+Independent of every other feature. Pick up when dual-window writes
+become a real workflow rather than an occasional collision.
+
+---
+
 ## Order of execution
 
 ```
@@ -613,6 +667,8 @@ F5 (TrustPulse / Beacon product toggle) — small follow-up
 F6 (rich-text editor) — independently sequenceable, doesn't block F3/F4
   ↓
 F7 (orphaned-draft finder + relink button) — small, independent, drop-in any time
+  ↓
+F8 (single-writer for draft_log) — preventative concurrency hardening
 ```
 
 F1 shipped first because the suggestions strip needs no new dependencies and
