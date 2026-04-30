@@ -36,6 +36,7 @@ import { proposeSuggestion } from "./lib/suggestions.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
 import { computeAuditMetrics } from "./lib/audit-metrics.js";
+import { paginate } from "./lib/paginate.js";
 import { parseWpsaJson } from "./lib/wpsa-schema.js";
 import { buildReportHtml } from "./lib/report-html.js";
 import { buildSlackSnippet } from "./lib/report-slack.js";
@@ -56,8 +57,20 @@ const state = {
    *  side panel's own window rather than the most-recently-focused one.
    *  Eliminates the cross-monitor race where the query returned a tab from
    *  a different window and a draft was logged with conversation_id null. */
-  windowId: null
+  windowId: null,
+  /** Library & Learning section: which tab is active, current page per tab,
+   *  and the current Library-prompts filter chip. Per-session memory only;
+   *  resets on panel reload. */
+  libraryPanel: {
+    activeTab: "library",         // "library" | "review" | "drafts"
+    libraryPage: 1,
+    suggestionPage: 1,
+    draftsPage: 1,
+    libraryFilter: "all"          // "all" | "seed" | "generated"
+  }
 };
+
+const LL_PER_PAGE = 10;
 
 /** Resolve the side panel's own window id once and cache it. Subsequent
  *  tab queries pass windowId: state.windowId instead of currentWindow:true. */
@@ -1464,6 +1477,30 @@ el("libraryToggle").addEventListener("click", async () => {
   if (panel.classList.contains("open")) await renderLibraryPanel();
 });
 
+// Tab strip — single delegated click switches active tab.
+el("llTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (!btn) return;
+  const tab = btn.dataset.tab;
+  if (!tab || tab === state.libraryPanel.activeTab) return;
+  state.libraryPanel.activeTab = tab;
+  syncTabUI();
+});
+
+// Library filter chips — switching resets pagination to page 1.
+el("libraryFilterChips")?.addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-filter]");
+  if (!chip) return;
+  const filter = chip.dataset.filter;
+  if (!filter || filter === state.libraryPanel.libraryFilter) return;
+  state.libraryPanel.libraryFilter = filter;
+  state.libraryPanel.libraryPage = 1;
+  document.querySelectorAll("#libraryFilterChips .ll-chip").forEach((c) => {
+    c.classList.toggle("is-active", c.dataset.filter === filter);
+  });
+  renderLibraryList();
+});
+
 el("exportHistory").addEventListener("click", async () => {
   const [drafts, library] = await Promise.all([getAllDrafts(), getAllEntries()]);
   const payload = { exported_at: new Date().toISOString(), drafts, library };
@@ -1492,19 +1529,99 @@ async function renderLibraryPanel() {
     <div class="metric"><div class="num">${m.quickTransforms}</div><div class="lbl">Quick transforms</div></div>
     <div class="metric"><div class="num ${m.pendingSuggestionCount ? "warn" : ""}">${m.pendingSuggestionCount}</div><div class="lbl">Suggestions</div></div>
   `;
+  applyMetricTileAffordance();
   await Promise.all([renderLibraryList(), renderSuggestionList(), renderRecentDrafts()]);
 }
 
+// Make the three navigable metric tiles clickable (Library prompts /
+// Drafts (30d) / Suggestions). Decorates them after metricsGrid renders.
+function applyMetricTileAffordance() {
+  const grid = el("metricsGrid");
+  if (!grid) return;
+  const tiles = grid.querySelectorAll(".metric");
+  // Order matches renderLibraryPanel's HTML: 0=Ready 1=Mgr 2=Library 3=Drafts 4=Quick 5=Suggestions.
+  const map = { 2: "library", 3: "drafts", 5: "review" };
+  tiles.forEach((tile, idx) => {
+    const target = map[idx];
+    if (!target) return;
+    tile.classList.add("is-clickable");
+    tile.setAttribute("role", "button");
+    tile.setAttribute("tabindex", "0");
+    tile.dataset.jumpTo = target;
+    const handler = () => jumpToLibraryTab(target);
+    tile.addEventListener("click", handler);
+    tile.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handler(); }
+    });
+  });
+}
+
+function jumpToLibraryTab(tab) {
+  const panel = el("historyPanel");
+  if (panel && !panel.classList.contains("open")) panel.classList.add("open");
+  state.libraryPanel.activeTab = tab;
+  syncTabUI();
+  el("llTabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncTabUI() {
+  const active = state.libraryPanel.activeTab;
+  document.querySelectorAll("#llTabs .ll-tab").forEach((b) => {
+    b.classList.toggle("is-active", b.dataset.tab === active);
+  });
+  document.querySelectorAll("[data-tab-pane]").forEach((p) => {
+    p.hidden = p.dataset.tabPane !== active;
+  });
+}
+
+function renderPaginator(containerId, pg, onChange) {
+  const node = el(containerId);
+  if (!node) return;
+  if (!pg || pg.totalPages <= 1) { node.innerHTML = ""; return; }
+  node.innerHTML = `
+    <button type="button" data-pg="prev" ${pg.page <= 1 ? "disabled" : ""}>◂ Prev</button>
+    <span class="ll-page">page ${pg.page} of ${pg.totalPages}</span>
+    <button type="button" data-pg="next" ${pg.page >= pg.totalPages ? "disabled" : ""}>Next ▸</button>
+  `;
+  node.querySelector("[data-pg=prev]")?.addEventListener("click", () => {
+    if (pg.page > 1) onChange(pg.page - 1);
+  });
+  node.querySelector("[data-pg=next]")?.addEventListener("click", () => {
+    if (pg.page < pg.totalPages) onChange(pg.page + 1);
+  });
+}
+
 async function renderLibraryList() {
-  const entries = (await getAllEntries()).sort((a, b) => b.weighted_score - a.weighted_score);
+  const all = await getAllEntries();
+  const filter = state.libraryPanel.libraryFilter;
+  const filtered = all.filter((e) => {
+    if (filter === "seed") return e.source === "seed";
+    if (filter === "generated") return e.source === "generated";
+    return true;
+  }).sort((a, b) => b.weighted_score - a.weighted_score);
+
   const list = el("libraryList");
-  if (!entries.length) {
-    list.innerHTML = '<div class="empty">Library empty. Generate a reply to populate.</div>';
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty">${
+      filter === "all"
+        ? "Library empty. Generate a reply to populate."
+        : `No ${filter === "seed" ? "seed" : "auto-generated"} entries yet.`
+    }</div>`;
+    renderPaginator("libraryPaginator", { totalPages: 1, page: 1 }, () => {});
     return;
   }
-  list.innerHTML = entries.map(renderLibraryItem).join("");
-  list.querySelectorAll("[data-reuse]").forEach((b) => b.addEventListener("click", () => reuseLibrary(b.dataset.reuse, "rerun")));
-  list.querySelectorAll("[data-load]").forEach((b) => b.addEventListener("click", () => reuseLibrary(b.dataset.load, "loadform")));
+
+  const pg = paginate(filtered, state.libraryPanel.libraryPage, LL_PER_PAGE);
+  state.libraryPanel.libraryPage = pg.page;
+  list.innerHTML = pg.rows.map(renderLibraryItem).join("");
+  list.querySelectorAll("[data-reuse]").forEach((b) =>
+    b.addEventListener("click", () => reuseLibrary(b.dataset.reuse, "rerun")));
+  list.querySelectorAll("[data-load]").forEach((b) =>
+    b.addEventListener("click", () => reuseLibrary(b.dataset.load, "loadform")));
+  renderPaginator("libraryPaginator", pg, (newPage) => {
+    state.libraryPanel.libraryPage = newPage;
+    renderLibraryList();
+  });
 }
 
 function renderLibraryItem(e) {
@@ -1545,13 +1662,22 @@ async function reuseLibrary(entryId, mode) {
 }
 
 async function renderSuggestionList() {
-  const pending = await getAllPendingSuggestions();
+  const pendingAll = await getAllPendingSuggestions();
+  // Newest first.
+  const pending = [...pendingAll].sort((a, b) => {
+    const ta = new Date(a.suggestion?.created_at || 0).getTime();
+    const tb = new Date(b.suggestion?.created_at || 0).getTime();
+    return tb - ta;
+  });
   const list = el("suggestionList");
   if (!pending.length) {
     list.innerHTML = '<div class="empty">No suggestions pending.</div>';
+    renderPaginator("suggestionPaginator", { totalPages: 1, page: 1 }, () => {});
     return;
   }
-  list.innerHTML = pending.map(({ entry, suggestion }) => {
+  const pg = paginate(pending, state.libraryPanel.suggestionPage, LL_PER_PAGE);
+  state.libraryPanel.suggestionPage = pg.page;
+  list.innerHTML = pg.rows.map(({ entry, suggestion }) => {
     const a = suggestion.ai_analysis || {};
     const change = (a.proposed_changes || [])[0];
     const changesHtml = (a.proposed_changes || []).map((c) =>
@@ -1624,6 +1750,11 @@ async function renderSuggestionList() {
         }
       });
     });
+  });
+
+  renderPaginator("suggestionPaginator", pg, (newPage) => {
+    state.libraryPanel.suggestionPage = newPage;
+    renderSuggestionList();
   });
 }
 
@@ -1738,10 +1869,16 @@ async function openApplyPreview(node) {
 }
 
 async function renderRecentDrafts() {
-  const drafts = (await getAllDrafts()).slice().reverse().slice(0, 25);
+  const drafts = (await getAllDrafts()).slice().reverse();
   const list = el("historyList");
-  if (!drafts.length) { list.innerHTML = '<div class="empty">No drafts yet.</div>'; return; }
-  list.innerHTML = drafts.map((d) => {
+  if (!drafts.length) {
+    list.innerHTML = '<div class="empty">No drafts yet.</div>';
+    renderPaginator("draftsPaginator", { totalPages: 1, page: 1 }, () => {});
+    return;
+  }
+  const pg = paginate(drafts, state.libraryPanel.draftsPage, LL_PER_PAGE);
+  state.libraryPanel.draftsPage = pg.page;
+  list.innerHTML = pg.rows.map((d) => {
     const when = new Date(d.ts).toLocaleString();
     const isQuick = d.action_type === "quick-retone" || d.action_type === "quick-translate";
     const badge = isQuick
@@ -1756,6 +1893,10 @@ async function renderRecentDrafts() {
     const snippet = escapeHtml((isQuick ? stripTags(d.output_html || "") : d.output_parsed?.versionA || d.draft_input || "").slice(0, 200));
     return `<div class="history-item"><div class="hi-head"><strong>${escapeHtml(title)}</strong>${badge}</div><div class="hi-meta">${when} · ${convo} · ${d.provider || "?"}</div><div class="hi-snippet">${snippet}</div></div>`;
   }).join("");
+  renderPaginator("draftsPaginator", pg, (newPage) => {
+    state.libraryPanel.draftsPage = newPage;
+    renderRecentDrafts();
+  });
 }
 
 function stripTags(html) { return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
@@ -2102,6 +2243,10 @@ async function handleRevisit(action, draft, conversationId) {
   await renderRevisitCard();
   await consumeRevisitPendingAction();
   await refreshStepOneSlot();
+  // Library & Learning section is now default-expanded; populate it.
+  if (el("historyPanel")?.classList.contains("open")) {
+    await renderLibraryPanel();
+  }
   loadCustomerHealth().catch(() => {});
   chrome.tabs.onActivated?.addListener?.(() => {
     renderRevisitCard().catch(() => {});

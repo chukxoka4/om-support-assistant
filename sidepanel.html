@@ -164,6 +164,22 @@
     .metric .num.good { color: var(--success); }
     .metric .num.warn { color: #d97706; }
     .metric .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+    .metric.is-clickable { cursor: pointer; transition: background 0.1s, border-color 0.1s; }
+    .metric.is-clickable:hover { background: #f3f4f6; border-color: var(--border-strong); }
+    .metric.is-clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .ll-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: 8px 0 10px; }
+    .ll-tab { padding: 7px 12px; font-size: 12px; font-weight: 500; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; border-radius: 0; }
+    .ll-tab:hover { color: var(--text); background: transparent; }
+    .ll-tab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+    .ll-pane { padding: 0; }
+    .ll-filter-chips { display: flex; gap: 6px; margin: 4px 0 10px; }
+    .ll-chip { padding: 3px 10px; font-size: 11px; font-weight: 500; border-radius: 12px; border: 1px solid var(--border); background: #fff; color: var(--muted); cursor: pointer; }
+    .ll-chip:hover { color: var(--text); background: #f3f4f6; }
+    .ll-chip.is-active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .ll-paginator { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+    .ll-paginator button { padding: 4px 10px; font-size: 11px; }
+    .ll-paginator button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ll-paginator .ll-page { font-variant-numeric: tabular-nums; }
 
     .history-item {
       background: var(--card); border: 1px solid var(--border);
@@ -573,21 +589,41 @@
   </div>
 
   <button type="button" class="history-toggle" id="libraryToggle">
-    <span id="libraryToggleLabel">Library &amp; learning</span>
+    <span id="libraryToggleLabel">Library &amp; Learning</span>
     <span>&#9662;</span>
   </button>
-  <div id="historyPanel">
+  <div id="historyPanel" class="open">
     <div class="metrics-grid" id="metricsGrid"></div>
     <div class="btn-row" style="margin-bottom: 10px">
       <button id="exportHistory">Export (JSON)</button>
       <button id="clearHistory">Clear draft log</button>
     </div>
-    <h3 style="margin-top:12px">Library prompts</h3>
-    <div id="libraryList"></div>
-    <h3 style="margin-top:14px">Review queue (weekly)</h3>
-    <div id="suggestionList"></div>
-    <h3 style="margin-top:14px">Recent drafts</h3>
-    <div id="historyList"></div>
+
+    <div class="ll-tabs" role="tablist" id="llTabs">
+      <button type="button" class="ll-tab is-active" role="tab" data-tab="library">Library prompts</button>
+      <button type="button" class="ll-tab" role="tab" data-tab="review">Review queue</button>
+      <button type="button" class="ll-tab" role="tab" data-tab="drafts">Recent drafts</button>
+    </div>
+
+    <div class="ll-pane" role="tabpanel" data-tab-pane="library">
+      <div class="ll-filter-chips" id="libraryFilterChips" role="tablist">
+        <button type="button" class="ll-chip is-active" data-filter="all">All</button>
+        <button type="button" class="ll-chip" data-filter="seed">Seeds</button>
+        <button type="button" class="ll-chip" data-filter="generated">Generated</button>
+      </div>
+      <div id="libraryList"></div>
+      <div class="ll-paginator" id="libraryPaginator"></div>
+    </div>
+
+    <div class="ll-pane" role="tabpanel" data-tab-pane="review" hidden>
+      <div id="suggestionList"></div>
+      <div class="ll-paginator" id="suggestionPaginator"></div>
+    </div>
+
+    <div class="ll-pane" role="tabpanel" data-tab-pane="drafts" hidden>
+      <div id="historyList"></div>
+      <div class="ll-paginator" id="draftsPaginator"></div>
+    </div>
   </div>
 
   <script type="module" src="sidepanel.js"></script>
