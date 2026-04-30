@@ -4,6 +4,31 @@ Each feature names its layer, the files it touches, and what to do. Bugs in [02-
 
 ---
 
+## Status overview
+
+| ID | Title | Status |
+|---|---|---|
+| F1 | In-textarea library suggestions strip with Lex/LLM toggle | ✅ shipped (+ programmatic input fix, Clear→Lex, expandable rows) |
+| F2 | Intercom client + customer chip + compose context | ✅ shipped (US region, no MCP, conversation-rules dropped, manual email lookup, timestamp formatting) |
+| F3 | Outreach mode | ⏳ planned |
+| F4 | Cross-ticket synthesis | ⏳ deferred until F3 + ≥30 days of data |
+| F5 | TrustPulse / Beacon product toggle | ⏳ planned (small, ~30 min) |
+| F6 | Rich-text editor for draft / prompt / manager-rewrite | ⏳ planned (full WYSIWYG, ~1 day) |
+| F7 | Orphaned-draft finder + relink button | ⏳ planned (~2 hours) |
+| F8 | Single-writer for `draft_log` | ⏳ filed (concurrency hardening) |
+
+### Other shipped surfaces (filed in this doc but worth calling out)
+
+| Feature | Status |
+|---|---|
+| Audit tab + report generator (HTML + Slack snippet) | ✅ shipped — see [AUDIT-AND-REPORT.md](AUDIT-AND-REPORT.md) |
+| WPSA prompt builder (programmatic, with O+I framework alignment) | ✅ shipped — see [AUDIT-AND-REPORT.md](AUDIT-AND-REPORT.md) and [DECISIONS.md D11](DECISIONS.md#d11) |
+| Library & Learning re-layout (tabs, pagination, filter chips, tile-jump) | ✅ shipped (2026-04-30) |
+
+For the reasoning behind shipped features, see [DECISIONS.md](DECISIONS.md).
+
+---
+
 ## F1 — In-textarea library suggestions (5 ranked entries)
 
 ### Vision

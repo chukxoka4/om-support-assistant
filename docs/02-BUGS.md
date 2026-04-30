@@ -10,6 +10,35 @@ Each bug has:
 
 ---
 
+## Status overview
+
+| ID | Title | Status |
+|---|---|---|
+| A1 | Retire dead v2 library store | ✅ shipped |
+| A2 | Wire Options Export / Import / Reset to v3 | ✅ shipped (+ side-panel mirror, + explicit Merge/Replace confirm) |
+| A3 | Visible toast errors for library actions | ✅ shipped |
+| B1 | Remove `edited` / `rewrote` outcomes + `correction_logged` | ✅ shipped |
+| C1 | Wire `proposeSuggestion` on managerial rewrite | ✅ shipped |
+| C2 | Suggestion accept opens preview; Apply mutates; no auto-apply | ✅ shipped (+ multi-change apply follow-up) |
+| D1 | Graceful fallback when `parseStructuredOutput` fails | ✅ shipped |
+| D2 | PII regex guard before auto-add to library | ✅ shipped |
+| D3 | Tighten `findEquivalent` with instruction-prefix dimension | ✅ shipped |
+| E1 | Safe `scenario_title` truncation | ⏳ planned |
+| E2 | Consistent `max_tokens` across providers | ⏳ planned |
+| E3 | Expire dismissals after 7 days | ⏳ planned |
+| E4 | Delete duplicate `logQuickTransform` | ⏳ planned |
+
+### Bugs shipped outside the original A–E sequence
+
+| ID | Title | Status |
+|---|---|---|
+| Window-pin | Pin tab queries to cached `windowId`; warn-toast on null ticket | ✅ shipped (2026-04-29) — see [DECISIONS.md D13](DECISIONS.md#d13) |
+| Quick-transform pause | Filter quick-transforms out of ticket-page storage listener | ✅ shipped (2026-04-30) — see [DECISIONS.md D15](DECISIONS.md#d15) |
+
+For the reasoning behind shipped fixes, see [DECISIONS.md](DECISIONS.md). Bugs E1–E4 details are below.
+
+---
+
 ## Phase A — Data foundation
 
 Stop the v2/v3 split. No behaviour change visible to user.

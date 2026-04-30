@@ -35,34 +35,38 @@ Three surfaces:
 ### Metrics
 - 30-day rolling window: `readyRate`, `managerRate`, draft volume, quick transforms, library count, pending suggestion count. ([lib/metrics.js](../lib/metrics.js))
 
-## On-going (built but unwired — the seams)
+## On-going (originally "built but unwired" — most now wired)
 
-These are scaffolded in code, not connected. They are the difference between "infrastructure for Adaptive" and "is Adaptive."
+This section was the project's original gap analysis. **Most items have shipped** ([02-BUGS.md](02-BUGS.md), [03-FEATURES.md](03-FEATURES.md)). Kept here as a historical record of where we started and to surface what's still open.
 
-### The library learning loop is dead
-- `proposeSuggestion` in [lib/suggestions.js](../lib/suggestions.js) is defined, exported, never called.
-- The UI at [sidepanel.js:508](../sidepanel.js) renders pending suggestions, but the queue is permanently empty.
-- The library learns *scores* but not *content*.
+### The library learning loop — ✅ wired (Bug C1, C2)
+- `proposeSuggestion` in [lib/suggestions.js](../lib/suggestions.js) is now called fire-and-forget on every managerial rewrite.
+- UI at the side panel's Review queue tab renders pending suggestions; Accept opens an inline preview; Apply mutates with `rewrites_absorbed` increment. No auto-apply ([DECISIONS.md D2](DECISIONS.md#d2)).
+- The library learns *both* scores and *content* via `applySuggestion`.
 
-### The library is grown but not retrieved
-- Picker dropdown is the only on-compose binding ([lib/compose.js:39](../lib/compose.js)).
-- You don't use the dropdown.
-- Library accumulates and goes unused at compose time.
+### The library is grown and retrieved — ✅ wired (Feature F1)
+- Below the draft textarea, a top-5 ranked suggestion strip surfaces relevant library entries before the agent hits Generate.
+- Lex / LLM toggle in the strip header ([DECISIONS.md D6](DECISIONS.md#d6)).
+- Picker dropdown still works for explicit selection.
 
-### Options-page Export / Import / Reset point at a dead store
-- Read/write `library_override` (v2), not `library_v3` (live).
-- v2 file [prompts/library.json](../prompts/library.json) is fossilised.
-- Import shape validation expects `{version, actions: []}` — a shape that exists nowhere.
-- Side panel has a working export ([sidepanel.js:428](../sidepanel.js)); no working import.
+### Options-page Export / Import / Reset — ✅ wired against v3 (Bug A2)
+- All three buttons read/write `library_v3`. Side panel mirrors them.
+- Import has an explicit Merge / Replace confirmation step; no destructive default.
+- v2 store entirely retired ([DECISIONS.md D18](DECISIONS.md#d18)).
 
-### Metrics show categories that can never populate
-- `outcome = "edited"` and `outcome = "rewrote"` referenced but never assigned anywhere.
-- `correction_logged` initialised to `false`, never set true.
-- Two zero-buckets in the dashboard. Misleading.
+### Metrics show categories that can never populate — ✅ removed (Bug B1)
+- `edited` / `rewrote` outcomes deleted; `correction_logged` removed.
+- Three terminal outcomes only: `sent` / `manager_approved` / `managerial_rewrite`.
 
 ### Other scaffold without wiring
-- `quick-transform` outcome is null and never updatable.
-- Suggestion review UI has accept/reject/defer but no auto-apply on accept.
+- `quick-transform` outcome remains null and never updatable. Quick transforms are operational, not part of the revisit loop. **Status: by design.**
+- Suggestion review UI has accept / reject / defer / **apply preview** — no auto-apply. **Status: shipped, non-auto-apply per [DECISIONS.md D2](DECISIONS.md#d2).**
+
+### Genuinely still on-going (as of 2026-04-30)
+- **F3 outreach mode** — second tab in the side panel for proactive emails (renewal, win-back, post-resolution). Spec in [03-FEATURES.md](03-FEATURES.md).
+- **F4 cross-ticket synthesis** — LLM pass over 30 days of `draft_log` for product / marketing intelligence. Deferred until F3 + real volume.
+- **F6 rich-text editor** — full WYSIWYG for the three customer-facing textareas. Spec in [03-FEATURES.md](03-FEATURES.md).
+- **Polish bugs E1–E4** — small clean-ups in [02-BUGS.md](02-BUGS.md).
 
 ## Future (rubric-aligned roadmap)
 
@@ -94,12 +98,39 @@ Closes Adaptive A2 fully. Closes Transformative T5.
 
 Deliberately last — needs F1 and F2 in production first so the data shape is real.
 
-## Where this sits on the AI Adoption Rubric today
+## Where this sits on the AI Adoption Rubric
 
-**Tier: solid Capable, with one Adaptive-tier asset (the library).**
+**Original tier (pre-A1 / pre-F1 / pre-F2): solid Capable, with one Adaptive-tier asset (the library).**
 
-- Capable C1 — Met. C2 — Partial (no live KB search). C3 — Missing (no customer history). C4 — Partial (handles upsell when picked, doesn't suggest). C5 — Met (quick transforms + audience dropdown).
-- Adaptive A1 — Partial (workflow systematised, no measured baseline). A2/A3/A4/A5 — Missing. A6 — Met but with the dead-loop bug suppressing it.
-- Transformative — all Missing.
+**Current tier (as of 2026-04-30, after A1–C2 + D1–D3 + F1 + F2 shipped):** Solid Capable across the board, Adaptive on three lines, foothold in Transformative.
 
-After the bug plan and F1+F2: Capable across the board, Adaptive on three lines, foothold in Transformative.
+```
+                    Originally       Now (2026-04-30)
+─────────────────────────────────────────────────────
+C1 Compose & rewrite     ✓ Met         ✓ Met
+C2 Knowledge retrieval   Partial       Met (F1 retrieval surfaces lib entries)
+C3 Customer history      Missing       Met (F2 chip surfaces plan/tenure/engagement)
+C4 Upsell awareness      Partial       Met (plan/status/MRR/trial in compose context)
+C5 Transformations       ✓ Met         ✓ Met
+
+A1 Measured baseline     Partial       Met (draft_log + readyRate / managerRate)
+A2 Personalised tmpls    Missing       Met (compose pulls customer ctx)
+A3 Voice of customer     Missing       Missing (needs F4 synthesis)
+A4 Proactive outreach    Missing       Missing (needs F3)
+A5 Tone/voice consistency  Partial     Partial (house-style works,
+                                                no automated audit)
+A6 Library that learns   Met-with-bug  ✓ Truly Met (C1 + C2 wired)
+
+T1 Predictive routing    Missing       Missing
+T2 Outcome optimisation  Missing       Missing
+T3 Account-level intel   Missing       Foothold (F2 surfaces companies)
+T4 Self-service loops    Missing       Missing
+T5 Cross-team intel      Missing       Missing
+```
+
+The remaining gaps that are realistic to close in Q3:
+- **A4** — F3 (outreach mode) closes this.
+- **A3 + T5** — F4 (cross-ticket synthesis) closes both.
+- **A1** — already Met but the May 1 weekly digest cadence ([06-REVIEW-PLAN.md](06-REVIEW-PLAN.md)) makes the "measured" part visible to the team. Trend data after 8 weeks compounds the case.
+
+See [06-REVIEW-PLAN.md](06-REVIEW-PLAN.md) for the supervisor-facing write-up of this rubric story.
