@@ -34,6 +34,7 @@ import {
 } from "./lib/library.js";
 import { maybeProposeFromOutcome } from "./lib/suggestions.js";
 import { attachSearchableSelect } from "./lib/searchable-select.js";
+import { polishText, polishBullets } from "./lib/text-polish.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
 import { computeAuditMetrics, computeAuditMetricsForRange } from "./lib/audit-metrics.js";
@@ -1147,14 +1148,19 @@ el("promptHypotheses")?.addEventListener("input", scheduleHypothesisSave);
 el("promptWeekStart")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
 el("promptWeekEnd")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
 
-el("promptGenerate")?.addEventListener("click", () => {
+el("promptGenerate")?.addEventListener("click", async () => {
   try {
+    // Best-effort polish on the hypothesis bullets so the analyser sees
+    // clean input. Silent: if the LLM is unavailable, originals flow
+    // through unchanged.
+    const rawBullets = readHypothesesFromTextarea();
+    const polished = rawBullets.length ? await polishBullets(rawBullets) : [];
     const prompt = buildWpsaPrompt({
       scope: el("promptScope").value,
       weekStart: el("promptWeekStart").value,
       weekEnd: el("promptWeekEnd").value,
       agent: el("promptAgent").value,
-      hypotheses: readHypothesesFromTextarea()
+      hypotheses: polished
     });
     el("promptOutput").value = prompt;
     setAuditStatus("promptStatus", "✓ Prompt generated. Click Copy and paste into WPSA AI.");
@@ -1278,7 +1284,10 @@ async function gatherReportInputs() {
   const audit = range
     ? computeAuditMetricsForRange({ drafts, library, ...range })
     : computeAuditMetrics({ drafts, library });
-  const ask = el("auditAsk")?.value || "";
+  // Best-effort polish of the ask before the report renders. Silent: if
+  // the LLM is unavailable or slow, the original text flows through.
+  const askRaw = el("auditAsk")?.value || "";
+  const ask = askRaw.trim() ? await polishText(askRaw) : askRaw;
   const cfg = await getReportConfig();
   return {
     personalWpsa: lastValidatedPersonal,
