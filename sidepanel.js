@@ -32,7 +32,7 @@ import {
   applySuggestion,
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
-import { proposeSuggestion } from "./lib/suggestions.js";
+import { maybeProposeFromOutcome } from "./lib/suggestions.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
 import { computeAuditMetrics, computeAuditMetricsForRange } from "./lib/audit-metrics.js";
@@ -2097,6 +2097,22 @@ async function refreshStepOneSlot() {
   bindStepOneRoot(slot.querySelector("[data-step1-root]"), d, "post_copy", "slot", null);
 }
 
+// Re-reads the draft from storage (so it sees the just-written outcome /
+// outcome_at / manager_rewrite_text) and asks the suggestion funnel to
+// decide whether to propose a refinement. Fire-and-forget: failures are
+// warned, not surfaced to the user.
+async function fireProposalForDraft(draftId) {
+  try {
+    const drafts = await getAllDrafts();
+    const fresh = drafts.find((d) => d.id === draftId);
+    if (!fresh) return;
+    const result = await maybeProposeFromOutcome(fresh);
+    if (result?.error) console.warn("proposeSuggestion failed:", result.error);
+  } catch (e) {
+    console.warn("fireProposalForDraft failed:", e);
+  }
+}
+
 async function saveManagerialRewrite(draft) {
   const wrap = el("revisitCard")?.querySelector(".r-mgrrw");
   const text = (wrap?.querySelector(".mgr-rw-text")?.value || "").trim();
@@ -2107,17 +2123,12 @@ async function saveManagerialRewrite(draft) {
   await updateDraft(draft.id, { outcome: "managerial_rewrite", manager_rewrite_text: text });
   if (draft.library_entry_id) {
     await bumpScore(draft.library_entry_id, "manager_approved", 5);
-    // Fire-and-forget: ask the LLM to propose a library refinement based on
-    // what the manager actually changed. Surfaces in the suggestion review
-    // queue. Per lib/suggestions.js, this should not block the UI.
-    proposeSuggestion({
-      entryId: draft.library_entry_id,
-      draftId: draft.id,
-      userOutput: chosenAssistantReply(draft),
-      finalOutput: text,
-      trigger: "managerial_rewrite"
-    }).catch((e) => console.warn("proposeSuggestion failed:", e));
   }
+  // Fire-and-forget: pull the freshly-stamped draft and ask the suggestion
+  // funnel to propose a library refinement. The funnel compares the agent's
+  // self-edit (what was sent) against the manager's rewrite — the delta the
+  // manager actually objected to.
+  fireProposalForDraft(draft.id);
   setStatus(el("formStatus"), "Logged managerial rewrite (+5, same weight as manager approved).", "ok");
   state.revisitMgrRewriteDraftId = null;
   await focusAssistantPanel();
@@ -2263,6 +2274,9 @@ async function handleRevisit(action, draft, conversationId) {
       const amount = action === "sent" ? 2 : 5;
       await bumpScore(draft.library_entry_id, field, amount);
     }
+    // Outcome confirmed — let the funnel propose a refinement if there's a
+    // meaningful diff between the AI output and what was actually sent.
+    fireProposalForDraft(draft.id);
     setStatus(el("formStatus"), `Logged: ${action.replace(/_/g, " ")}.`, "ok");
     await focusAssistantPanel();
     el("formStatus")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
