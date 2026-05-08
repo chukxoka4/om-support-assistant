@@ -35,7 +35,7 @@ import {
 import { proposeSuggestion } from "./lib/suggestions.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
-import { computeAuditMetrics } from "./lib/audit-metrics.js";
+import { computeAuditMetrics, computeAuditMetricsForRange } from "./lib/audit-metrics.js";
 import { paginate } from "./lib/paginate.js";
 import { parseWpsaJson } from "./lib/wpsa-schema.js";
 import { buildReportHtml } from "./lib/report-html.js";
@@ -1058,6 +1058,16 @@ function autoFillAgentForScope() {
 
 el("promptScope")?.addEventListener("change", autoFillAgentForScope);
 
+// Re-render the live audit metrics when the user changes either date input,
+// so the Section 2 numbers reflect the chosen [from, to] window without
+// needing a panel reopen.
+el("promptWeekStart")?.addEventListener("change", () => {
+  refreshAuditLiveMetrics().catch(() => {});
+});
+el("promptWeekEnd")?.addEventListener("change", () => {
+  refreshAuditLiveMetrics().catch(() => {});
+});
+
 el("promptGenerate")?.addEventListener("click", () => {
   try {
     const prompt = buildWpsaPrompt({
@@ -1132,19 +1142,48 @@ el("auditTeamJson")?.addEventListener("input", () => {
   }
 });
 
+// Reads the From/To date inputs and returns a [rangeStart, rangeEnd] ISO
+// pair, end-of-day on the To input. Returns null when either date is missing
+// or the range is inverted — caller falls back to the trailing 7-day window.
+function readReportRange() {
+  const start = el("promptWeekStart")?.value;
+  const end = el("promptWeekEnd")?.value;
+  if (!start || !end) return null;
+  const rangeStart = new Date(`${start}T00:00:00.000Z`).toISOString();
+  const rangeEnd = new Date(`${end}T23:59:59.999Z`).toISOString();
+  if (new Date(rangeEnd).getTime() < new Date(rangeStart).getTime()) return null;
+  return { rangeStart, rangeEnd };
+}
+
 async function refreshAuditLiveMetrics() {
   const drafts = await getAllDrafts();
   const library = await getAllEntries();
-  const metrics = computeAuditMetrics({ drafts, library });
+  const range = readReportRange();
+  const metrics = range
+    ? computeAuditMetricsForRange({ drafts, library, ...range })
+    : computeAuditMetrics({ drafts, library });
   const lib = metrics.library;
   const sug = metrics.suggestions;
+  const inRange = !!metrics.counts;
+  const sugApplied = inRange ? sug.appliedInRange : sug.appliedThisWeek;
+  const sugRejected = inRange ? sug.rejectedInRange : sug.rejectedThisWeek;
+  const sugDeferred = inRange ? sug.deferredInRange : sug.deferredThisWeek;
+  const sugTotal = inRange ? sug.totalResolvedInRange : sug.totalResolvedThisWeek;
+  const addedSuffix = inRange
+    ? (lib.addedInRange ? ` (+${lib.addedInRange} in range)` : "")
+    : (lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : "");
+  const activityLine = inRange
+    ? `<li>Activity in range: <strong>${metrics.counts.generated}</strong> generated · <strong>${metrics.counts.sent}</strong> sent/approved · <strong>${metrics.counts.rewritten}</strong> manager rewrites · <strong>${metrics.counts.reachedOutcome}/${metrics.counts.generated}</strong> reached an outcome</li>`
+    : "";
+  const rtsLabel = inRange ? "of drafts that reached an outcome in range" : "personal review pattern";
   el("auditLiveMetrics").innerHTML = `
     <ul style="margin: 4px 0 0 16px; padding: 0; line-height: 1.7;">
-      <li>Library: <strong>${lib.total}</strong> entries${lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : ""}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
-      <li>Suggestions resolved this week: <strong>${sug.totalResolvedThisWeek}</strong> (${sug.appliedThisWeek} applied · ${sug.rejectedThisWeek} rejected · ${sug.deferredThisWeek} deferred), <strong>${sug.pending}</strong> pending</li>
+      ${activityLine}
+      <li>Library: <strong>${lib.total}</strong> entries${addedSuffix}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
+      <li>Suggestions ${inRange ? "resolved in range" : "resolved this week"}: <strong>${sugTotal}</strong> (${sugApplied} applied · ${sugRejected} rejected · ${sugDeferred} deferred), <strong>${sug.pending}</strong> pending</li>
       <li>Suggestion strip CTR: <strong>${metrics.suggestionCtr.ratePercent != null ? metrics.suggestionCtr.ratePercent + "%" : "—"}</strong>${metrics.suggestionCtr.total ? ` (${metrics.suggestionCtr.clicked}/${metrics.suggestionCtr.total})` : " (no impressions yet)"}</li>
       <li>Customer-context coverage: <strong>${metrics.customerContext.ratePercent != null ? metrics.customerContext.ratePercent + "%" : "—"}</strong>${metrics.customerContext.total ? ` (${metrics.customerContext.withContext}/${metrics.customerContext.total} replies)` : ""}</li>
-      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(personal review pattern)</em></li>
+      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(${rtsLabel})</em></li>
     </ul>`;
   return metrics;
 }
@@ -1152,7 +1191,13 @@ async function refreshAuditLiveMetrics() {
 async function gatherReportInputs() {
   const drafts = await getAllDrafts();
   const library = await getAllEntries();
-  const audit = computeAuditMetrics({ drafts, library });
+  const range = readReportRange();
+  // Report always prefers the explicit range (even if it falls back to
+  // defaults at panel open, the inputs will be populated). If the user has
+  // cleared one of the inputs, fall back to last-7-days from now.
+  const audit = range
+    ? computeAuditMetricsForRange({ drafts, library, ...range })
+    : computeAuditMetrics({ drafts, library });
   const ask = el("auditAsk")?.value || "";
   const cfg = await getReportConfig();
   return {
