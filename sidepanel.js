@@ -33,6 +33,7 @@ import {
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
 import { maybeProposeFromOutcome } from "./lib/suggestions.js";
+import { attachSearchableSelect } from "./lib/searchable-select.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
 import { computeAuditMetrics, computeAuditMetricsForRange } from "./lib/audit-metrics.js";
@@ -144,6 +145,11 @@ function setDropdowns({ goal, audience, tone, mode, concise }) {
   if (tone) el("tone").value = tone;
   if (mode) el("mode").value = mode;
   el("concise").checked = !!concise;
+  // Programmatic select.value sets don't fire change events; nudge the
+  // searchable-select wrappers so their trigger labels stay in sync.
+  for (const id of ["goal", "audience", "tone", "mode"]) {
+    if (typeof dropdownHandles !== "undefined") dropdownHandles.get(id)?.refresh();
+  }
 }
 
 function setStatus(node, msg, cls = "") {
@@ -378,6 +384,10 @@ const SELECT_FIELDS = [
   { id: "mode", key: "modes" }
 ];
 
+// Component handles per <select>. Kept so we can call refresh() after the
+// underlying option list mutates (taxonomy add) without re-attaching.
+const dropdownHandles = new Map();
+
 async function renderDropdowns() {
   const tax = await getTaxonomy();
   for (const { id, key } of SELECT_FIELDS) {
@@ -390,6 +400,20 @@ async function renderDropdowns() {
       sel.appendChild(opt);
     }
     if (current && tax[key]?.includes(current)) sel.value = current;
+    if (!dropdownHandles.has(id)) {
+      const handle = attachSearchableSelect(sel, {
+        onAddNew: async (typed) => {
+          await addTaxonomyValue(key, typed);
+          await renderDropdowns();
+          sel.value = typed;
+          dropdownHandles.get(id)?.refresh();
+          return typed;
+        }
+      });
+      if (handle) dropdownHandles.set(id, handle);
+    } else {
+      dropdownHandles.get(id).refresh();
+    }
   }
 }
 
@@ -406,6 +430,7 @@ document.querySelectorAll(".add-value-link").forEach((link) => {
 });
 
 // ---------- library picker ----------
+let libraryPickHandle = null;
 async function renderLibraryPicker() {
   const pick = el("libraryPick");
   const entries = (await getAllEntries()).sort((a, b) => b.weighted_score - a.weighted_score);
@@ -416,6 +441,11 @@ async function renderLibraryPicker() {
     const score = e.weighted_score ? ` · ${Math.round(e.weighted_score)}` : "";
     opt.textContent = `${e.scenario_title}${score}`;
     pick.appendChild(opt);
+  }
+  if (!libraryPickHandle) {
+    libraryPickHandle = attachSearchableSelect(pick);
+  } else {
+    libraryPickHandle.refresh();
   }
 }
 
