@@ -559,6 +559,11 @@
       <input type="text" id="promptAgent" placeholder="Your name, a teammate's name, or 'Team'" />
       <div class="meta">Defaults to your name (Personal scope) or "Team". Editable to prepare a report for someone else.</div>
     </div>
+    <div class="field">
+      <label for="promptHypotheses">Hypotheses to investigate (optional)</label>
+      <textarea id="promptHypotheses" rows="3" placeholder="One per line. e.g. Many users duplicate a campaign instead of creating from scratch — is that pattern showing up in tickets?"></textarea>
+      <div class="meta">Additive lens. Each hypothesis becomes a per-finding mini-report inside the weekly report. Hidden entirely if blank. Saved per date range.</div>
+    </div>
     <div class="btn-row">
       <button id="promptGenerate" class="primary">Generate prompt</button>
       <button id="promptCopy">Copy prompt</button>

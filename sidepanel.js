@@ -1070,6 +1070,8 @@ async function initPromptBuilder() {
   if (!agentEl.value) {
     agentEl.value = scopeEl.value === "team" ? "Team" : (cfg.agentName || "");
   }
+  // Restore any persisted hypotheses for this date range.
+  await loadHypothesesForRange();
 }
 
 function autoFillAgentForScope() {
@@ -1098,13 +1100,61 @@ el("promptWeekEnd")?.addEventListener("change", () => {
   refreshAuditLiveMetrics().catch(() => {});
 });
 
+// Hypothesis bullets — one per non-empty line. Used by both the prompt
+// builder and the (commit B) ask polisher.
+function readHypothesesFromTextarea() {
+  const raw = el("promptHypotheses")?.value || "";
+  return raw.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+// Per-range persistence so reopening April 5–11 next month restores what
+// you were investigating. Keyed by `${weekStart}_${weekEnd}` under a single
+// chrome.storage.local entry.
+const HYPOTHESIS_STORE = "hypothesis_drafts";
+function rangeKey() {
+  const s = el("promptWeekStart")?.value;
+  const e = el("promptWeekEnd")?.value;
+  if (!s || !e) return null;
+  return `${s}_${e}`;
+}
+
+async function loadHypothesesForRange() {
+  const key = rangeKey();
+  const ta = el("promptHypotheses");
+  if (!key || !ta) return;
+  const { [HYPOTHESIS_STORE]: store = {} } = await chrome.storage.local.get(HYPOTHESIS_STORE);
+  ta.value = store[key] || "";
+}
+
+let hypothesisSaveTimer = null;
+function scheduleHypothesisSave() {
+  clearTimeout(hypothesisSaveTimer);
+  hypothesisSaveTimer = setTimeout(async () => {
+    const key = rangeKey();
+    if (!key) return;
+    const { [HYPOTHESIS_STORE]: store = {} } = await chrome.storage.local.get(HYPOTHESIS_STORE);
+    const value = el("promptHypotheses")?.value || "";
+    if (value.trim()) {
+      store[key] = value;
+    } else {
+      delete store[key];
+    }
+    await chrome.storage.local.set({ [HYPOTHESIS_STORE]: store });
+  }, 400);
+}
+
+el("promptHypotheses")?.addEventListener("input", scheduleHypothesisSave);
+el("promptWeekStart")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
+el("promptWeekEnd")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
+
 el("promptGenerate")?.addEventListener("click", () => {
   try {
     const prompt = buildWpsaPrompt({
       scope: el("promptScope").value,
       weekStart: el("promptWeekStart").value,
       weekEnd: el("promptWeekEnd").value,
-      agent: el("promptAgent").value
+      agent: el("promptAgent").value,
+      hypotheses: readHypothesesFromTextarea()
     });
     el("promptOutput").value = prompt;
     setAuditStatus("promptStatus", "✓ Prompt generated. Click Copy and paste into WPSA AI.");
