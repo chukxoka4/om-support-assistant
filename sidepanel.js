@@ -2349,4 +2349,17 @@ async function handleRevisit(action, draft, conversationId) {
       loadCustomerHealth().catch(() => {});
     }
   });
+  // Live-refresh the Library panel when the underlying library changes
+  // (suggestion added by fire-and-forget LLM call, suggestion accepted in
+  // another window, draft logged from a content-script context, etc.).
+  // Without this the Suggestions tile shows a stale count until the panel
+  // is reopened.
+  chrome.storage.onChanged?.addListener?.((changes, area) => {
+    if (area !== "local") return;
+    const touched = changes.library_v3 || changes.draft_log;
+    if (!touched) return;
+    if (el("historyPanel")?.classList.contains("open")) {
+      renderLibraryPanel().catch(() => {});
+    }
+  });
 })();
