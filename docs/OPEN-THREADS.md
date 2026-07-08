@@ -138,6 +138,26 @@ If a thread sits here for a long time and nothing changes, that's a decision in 
 
 ---
 
+## OT-14 — "Claude Design" visuals / HTML→video for the Slack launch
+
+**Context.** During the 2026-05-08 Slack soft-launch thread, the agent wanted to use Anthropic's design/artifact tooling ("Claude Design") to produce annotated visuals and an autoplay animation of the side panel + report — and asked about converting an autoplay HTML into a shareable video. This was exploratory; no finished visual artefact landed in this repo.
+
+**Status.** Not filed as a feature (it's a launch/marketing asset, not product code). The Slack post's content — a feature-to-rubric mapping — is captured in [09-STRATEGY-AND-LAUNCH.md](09-STRATEGY-AND-LAUNCH.md). The rubric mapping itself is reproducible via the `ai-adoption-rubric-support` skill.
+
+**When it matters again.** If the agent revisits the launch or a QBR demo and wants polished visuals. Note the working-style lesson recorded in [09](09-STRATEGY-AND-LAUNCH.md): research an unfamiliar tool before claiming you don't know it.
+
+---
+
+## OT-15 — Hypothesis persistence scope
+
+**Context.** Hypotheses are saved per date range in `chrome.storage.local` under `hypothesis_drafts`. The user was *"indifferent"* about persisting them but agreed it made sense so a panel reload doesn't lose them.
+
+**Status.** Shipped as range-keyed persistence ([08 §6](08-REPORT-SUGGESTIONS-V2.md), [DECISIONS.md D31](DECISIONS.md#d31)). No expiry / cleanup — the store grows one entry per distinct range ever used.
+
+**When it matters again.** If `hypothesis_drafts` accumulates stale ranges and wants pruning (e.g. drop entries older than N months), or if hypotheses should persist across devices (`chrome.storage.sync` instead of `local`).
+
+---
+
 ## How to add a new thread
 
 Append. New entry as `## OT-X — short title`. Context, Status, "When it matters again." Two paragraphs each is plenty. If a thread grows beyond that, it's probably ready to graduate to a feature or bug entry.

@@ -77,9 +77,11 @@ If you're tasked with…
 1. Entry points       background.js · sidepanel.js · options.js · content scripts
 2. Services           lib/compose.js · lib/voice.js · lib/library.js · lib/library-rank.js
                       lib/suggestions.js · lib/intercom-snapshot.js · lib/audit-metrics.js
-                      lib/report-html.js · lib/prompt-generator.js · lib/quick-transform.js
+                      lib/report-html.js · lib/report-slack.js · lib/prompt-generator.js
+                      lib/quick-transform.js · lib/text-polish.js
 3. Repositories       lib/storage.js · lib/intercom-client.js · lib/ticket.js · lib/html.js
                       lib/toast.js · lib/wpsa-schema.js · lib/paginate.js · lib/charts.js
+                      lib/diff-text.js · lib/searchable-select.js (+ .css)
 4. Infrastructure     providers/{gemini,claude,openai}.js · providers/index.js
 5. Data               prompts/om-seeds.json · prompts/house-style.md · prompts/products/*.md
 ```
@@ -145,6 +147,13 @@ SHIPPED (as of 2026-04-30):
   Audit tab + report generator + WPSA prompt builder (the May 1 pitch)
   Library & Learning re-layout: tabs, pagination, filter chips, tile-jump
   Orphaned-draft recovery via console snippet (manual procedure)
+
+  Report & Suggestions v2 (2026-05-08 — see docs/08-REPORT-SUGGESTIONS-V2.md):
+    Outcome-driven suggestion learning (self-edit vs manager rewrite)
+    outcome_at timestamps + range-based / split audit metrics
+    Date-range-driven report; hypothesis investigation lens
+    Searchable-select dropdowns; best-effort LLM text polish
+    Live-refresh suggestion tile
 
 PLANNED:
   Bugs E1-E4   Polish (safe truncation, max_tokens, dismissal expiry, dedupe)

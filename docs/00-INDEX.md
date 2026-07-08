@@ -20,7 +20,9 @@ Living planning + reference docs. Read in order if you're new; jump to whichever
 
 - **[06-REVIEW-PLAN.md](06-REVIEW-PLAN.md)** — Q2/Q3 supervisor expectations, the May 1 reporting pitch, two-week build plan, honest gaps.
 - **[07-WPSA-REPORTER.md](07-WPSA-REPORTER.md)** — WPSiteAssist reporting tool: Friday workflow, prompt library, drift hygiene.
+- **[09-STRATEGY-AND-LAUNCH.md](09-STRATEGY-AND-LAUNCH.md)** — who's who (incl. manager Erica), the origin story, the AI Adoption Rubric as the spine, the May-8 Slack soft-launch, spawned skills, external refs.
 - **[CONVENTIONS.md](CONVENTIONS.md)** — branch model, commit norms, pre-commit hook contract, test rules, naming, doc discipline.
+- **[SESSION-HISTORY.md](SESSION-HISTORY.md)** — which session built what; provenance index for a future owner / migration.
 
 ### Product / state
 
@@ -28,6 +30,7 @@ Living planning + reference docs. Read in order if you're new; jump to whichever
 - **[02-BUGS.md](02-BUGS.md)** — A1–E4 bug plan with shipped/open status.
 - **[03-FEATURES.md](03-FEATURES.md)** — F1–F8 feature plan with shipped/planned status.
 - **[04-MOCKUPS.md](04-MOCKUPS.md)** — text mockups for visual review before UI is built.
+- **[08-REPORT-SUGGESTIONS-V2.md](08-REPORT-SUGGESTIONS-V2.md)** — the 2026-05-08 batch: outcome-driven learning, range-based reporting, hypothesis lens, searchable dropdowns, text-polish. Post-dates the docs sweep; not covered by 01–04.
 
 ### System reference
 
@@ -63,10 +66,11 @@ Living planning + reference docs. Read in order if you're new; jump to whichever
 Entry points       background.js · content scripts · sidepanel.js · options.js
 Services           lib/compose.js · lib/voice.js · lib/library.js · lib/library-rank.js
                    lib/suggestions.js · lib/intercom-snapshot.js · lib/audit-metrics.js
-                   lib/report-html.js · lib/prompt-generator.js · lib/quick-transform.js
-                   providers/index.js
+                   lib/report-html.js · lib/report-slack.js · lib/prompt-generator.js
+                   lib/quick-transform.js · lib/text-polish.js · providers/index.js
 Repositories       lib/storage.js · lib/intercom-client.js · lib/ticket.js · lib/html.js
                    lib/toast.js · lib/wpsa-schema.js · lib/paginate.js · lib/charts.js
+                   lib/diff-text.js · lib/searchable-select.js (+ .css)
 Infrastructure     providers/{gemini,claude,openai}.js
 Data               prompts/om-seeds.json · prompts/house-style.md · prompts/products/*.md
 ```

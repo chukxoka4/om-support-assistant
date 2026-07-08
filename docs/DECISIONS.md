@@ -256,6 +256,86 @@ Format: short. Two paragraphs maximum per decision. If a decision needs more tha
 
 ---
 
+## D26 — Suggestion learning is outcome-driven and compares the right two texts
+
+**Decision.** Library-refinement proposals no longer fire inline from the UI on a managerial rewrite. They fire on **outcome confirmation** via a single funnel in [lib/suggestions.js](../lib/suggestions.js) (`decideProposal` pure + `maybeProposeFromOutcome` side-effecting). On `sent`/`manager_approved` it compares the **AI output → the agent's self-edit**; on `managerial_rewrite` it compares **what the agent actually sent → the manager's rewrite**. An idempotency guard prevents double-firing per draft.
+
+**Why.** The agent almost never sends verbatim — *"I have very few instances where I have sent the email as is."* The old model (AI-output vs manager-rewrite) blamed the model for the agent's own edits, polluting the lesson. Learning must come from the self-edit on approved drafts and from the manager's delta over what was actually sent. See [08-REPORT-SUGGESTIONS-V2.md §1](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** A third outcome category appears, or the self-edit vs manager-rewrite distinction stops mapping to how the agent works.
+
+---
+
+## D27 — Stamp `outcome_at`; do not reattribute historical drafts
+
+**Decision.** `updateDraft` stamps `outcome_at` on the first transition into a non-null outcome. Range-based reports bucket outcomes by `outcome_at`, generation by `ts`. Drafts predating this have no `outcome_at` and are simply absent from outcome-bucket counts — **no back-fill / reattribution**.
+
+**Why.** Generation date ≠ outcome date; a draft made Apr 1 and approved Apr 6 belongs to the Apr 6 week for "approved," the Apr 1 week for "generated." The user accepted the migration gap: *"No need to reattribute if okay."* See [08 §2](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** A report needs historical outcome accuracy badly enough to justify a one-time back-fill from other signals.
+
+---
+
+## D28 — Split the stats instead of reattributing (generated / sent / rewritten)
+
+**Decision.** Audit metrics expose separate range-based counts: `generatedInRange` (by `ts`), `sentInRange` + `rewrittenInRange` (by `outcome_at`), `suggestionResolutionsInRange` (by `resolved_at`), `libraryStateInRange`/`librarySizeSeriesInRange` (by `created_at`). The legacy trailing-window helpers stay for the live tiles.
+
+**Why.** The user's call when shown the reattribution problem: *"Why not split the stats — Generated data should be separate from approved."* Splitting is honest and avoids overlapping windows across report runs. See [08 §3](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** A single blended "weekly throughput" number is wanted for a dashboard — compute it from the split counts, don't collapse them.
+
+---
+
+## D29 — The report is driven by a user-chosen date range
+
+**Decision.** The Audit tab exposes a date-range picker that flows into both the WPSA prompt (`weekStart`/`weekEnd`) and the extension's live metrics, which refresh immediately on range change. Default remains the previous Mon→Sun week.
+
+**Why.** *"I need whatever I set as the timeframe to actually pick from that and adjust immediately… clean data points that are not overlapping."* Also enables quarterly-review windows. See [08 §4](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** Ranges need presets (last-week / this-quarter buttons) — additive, doesn't change the model.
+
+---
+
+## D30 — Searchable-select progressively enhances the native `<select>`
+
+**Decision.** [lib/searchable-select.js](../lib/searchable-select.js) hides the native `<select>` (kept as source of truth for forms / programmatic sets / change events) and renders a filterable popup with ~8 visible rows + optional `Add "x"`. Applied to goal/audience/tone/mode + library picker. Pure DOM, no `chrome.*`.
+
+**Why.** Dropdowns were growing and long titles made plain selects unpleasant: *"these dropdowns need to be search-based… show something but not a long list… some of the titles are too long."* Progressive enhancement keeps existing wiring intact — *"the code has to be layered… do not throw it away."* See [08 §5](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** A design system component replaces it, or virtualization is needed for very long lists.
+
+---
+
+## D31 — Hypotheses are an additive, optional, per-finding lens on the report
+
+**Decision.** The weekly report accepts optional user hypotheses. They flow into the WPSA prompt as an explicit *additive lens that must not override headline numbers*, come back as `hypothesisFindings[]` (validated, unknown enums drop to null), and render as per-finding cards with a **collapsed** mini-report (`frictionReframe`/`oiImpact`/`recommendedAction`) that only appears when populated. Absent hypotheses → nothing renders. Persisted per range in `hypothesis_drafts`.
+
+**Why.** The agent wanted to test hunches (e.g. "people duplicate-and-edit campaigns rather than create fresh") against the tickets *without* distorting the main report: *"additive not a change… rendered separately in case it is nothing… per-finding, almost like its own report."* See [08 §6](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** Hypotheses should influence the headline leaderboard directly (they currently must not) — that's a different, deliberate design.
+
+---
+
+## D32 — Text polish is best-effort and never fails the flow
+
+**Decision.** [lib/text-polish.js](../lib/text-polish.js) `polishText`/`polishBullets` clean grammar/spelling of the weekly "ask" and hypothesis bullets before they enter the prompt. Always returns a string: skips input <10 chars, falls back to the original on timeout (5s) / failure / no provider, and rejects output >2.5× the original length as off-script.
+
+**Why.** *"Clean up the grammar if there is a successful connection but if there is none does not fail and just uses what is there… I don't have to intervene except it is not necessary."* Copy-editor only, no paraphrasing. See [08 §8](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** Polish is wanted on customer-facing draft text (it isn't today — that path has its own compose pipeline and house style).
+
+---
+
+## D33 — Live-refresh the suggestion tile on library mutations
+
+**Decision.** The suggestions metric tile re-renders whenever the review queue changes. Folded into the May-8 sweep because the area was already open.
+
+**Why.** The "suggestions stuck on 8" symptom was partly a stale tile that never re-rendered after accept/reject/apply (compounding the outcome-driven rework in D26). See [08 §7](08-REPORT-SUGGESTIONS-V2.md).
+
+**Revisit when.** Tile refresh logic is generalised across all metric tiles.
+
+---
+
 ## How to add a new decision
 
 Append to this file. New entry as `## DXX — short title`. Decision · Why · Revisit when. Two paragraphs max. If you can't fit it in two paragraphs, the decision is probably not yet decided — keep iterating.

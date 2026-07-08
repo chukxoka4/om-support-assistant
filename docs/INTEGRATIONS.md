@@ -197,12 +197,13 @@ Where every persistent piece of data lives.
 |---|---|---|
 | `library_v3` | Library / Playbook entries (seeds + auto-generated). Array. | [lib/library.js](../lib/library.js) |
 | `library_v3_seeded` | Boolean flag — has the seed import run? | [lib/library.js](../lib/library.js) |
-| `draft_log` | Every compose, every quick transform, every Step-1/2 outcome. Array, append-only. | [lib/storage.js](../lib/storage.js) |
+| `draft_log` | Every compose, every quick transform, every Step-1/2 outcome. Array, append-only. Outcome transitions are stamped with `outcome_at` (see [08](08-REPORT-SUGGESTIONS-V2.md), [DECISIONS.md D27](DECISIONS.md#d27)). | [lib/storage.js](../lib/storage.js) |
 | `revisit_dismissals` | Per-conversation modal-dismissed timestamps. Object. | [lib/storage.js](../lib/storage.js) |
 | `user_taxonomy` | Custom dropdown values added at runtime. Object with `goals`, `audiences`, `tones`, `modes`. | [lib/storage.js](../lib/storage.js) |
 | `incoming_selection` | Right-click → Send to Draft scratch payload. Cleared after consumption. | [content.js](../content.js), [sidepanel.js](../sidepanel.js) |
 | `last_ticket_opened` | Most-recent ticket conversation_id. Drives revisit-card refresh. | [content-ticket.js](../content-ticket.js) |
 | `revisit_pending_action` | Pending Step-2 navigation hint. | [content-ticket.js](../content-ticket.js) |
+| `hypothesis_drafts` | Per-date-range saved report hypotheses (object keyed by range). Survives panel reload. | [sidepanel.js](../sidepanel.js), see [08-REPORT-SUGGESTIONS-V2.md](08-REPORT-SUGGESTIONS-V2.md) |
 
 ### `chrome.storage.sync` (cross-device, settings-class)
 
