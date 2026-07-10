@@ -2,7 +2,7 @@ import { callGemini } from "./gemini.js";
 import { callClaude } from "./claude.js";
 import { callOpenAI } from "./openai.js";
 import { callClaudeCode, pingClaudeCode } from "./claude-code.js";
-import { getApiKeys, getDefaultProvider, getAvailableProviders } from "../lib/storage.js";
+import { getApiKeys, resolveDefaultProvider, getAvailableProviders } from "../lib/storage.js";
 
 const DISPATCHERS = {
   gemini: callGemini,
@@ -22,7 +22,7 @@ const KEYLESS_PROVIDERS = new Set(["claude-code"]);
 export async function callLLM({ provider, model, system, user, mode }) {
   const keys = await getApiKeys();
   let chosen = provider;
-  if (!chosen) chosen = (await getDefaultProvider()) || (await getAvailableProviders())[0];
+  if (!chosen) chosen = await resolveDefaultProvider();
   if (!chosen) return { text: "", error: "No provider configured. Add an API key in options." };
 
   let apiKey;

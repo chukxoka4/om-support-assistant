@@ -14,7 +14,7 @@ Three surfaces:
 ### Compose pipeline
 - System prompt is built as: role → house style → output contract → dropdowns context → scenario instruction → optional library task. ([lib/voice.js](../lib/voice.js))
 - AI returns: `REASON`, `VERSION A (The Polish)`, `VERSION B (The Revamp)`, plus `CLEAN_PROMPT` + `SCENARIO_SUMMARY` when no library entry was used. ([lib/compose.js](../lib/compose.js))
-- Provider-agnostic dispatcher in [providers/index.js](../providers/index.js). Defaults: Gemini Flash, Claude Sonnet 4.6, GPT-4o.
+- Provider-agnostic dispatcher in [providers/index.js](../providers/index.js). Four providers: **`claude-code`** (key-less — routes through the local Claude Code bridge on the Enterprise seat; the working default once enabled), `claude` (direct API), and — behind a third-party opt-in — `gemini` / `openai`. Availability & default resolution live in [lib/storage.js](../lib/storage.js) (`getAvailableProviders` / `resolveDefaultProvider`): the connector counts as available when its last bridge ping succeeded, direct-Claude on a key, Gemini/OpenAI only when keyed **and** `allowThirdParty` is on. See [DECISIONS D34–D38](DECISIONS.md) and [10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md).
 
 ### Library
 - Single store: `library_v3` in `chrome.storage.local`.

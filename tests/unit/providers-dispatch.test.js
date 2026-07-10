@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { callLLM } from "../../providers/index.js";
-import { setApiKeys } from "../../lib/storage.js";
+import { setApiKeys, setClaudeCodeStatus } from "../../lib/storage.js";
 
 // The dispatcher resolves the provider, applies the key rule, and delegates.
 // We drive claude-code through the mocked native-messaging transport and assert
@@ -54,9 +54,19 @@ describe("callLLM — keyed providers still require a key", () => {
 
 describe("callLLM — resolution + unknown provider", () => {
   it("returns 'No provider configured' when nothing is chosen or available", async () => {
+    await chrome.storage.sync.clear();
     await setApiKeys({ gemini: "", claude: "", openai: "" });
     const out = await callLLM({ system: "s", user: "u" });
     expect(out.error).toMatch(/No provider configured/);
+  });
+
+  it("auto-resolves to claude-code (no explicit provider, no keys) when the connector is enabled", async () => {
+    await chrome.storage.sync.clear();
+    await setApiKeys({ gemini: "", claude: "", openai: "" });
+    await setClaudeCodeStatus({ enabled: true, lastPingOk: true, lastPingAt: 1 });
+    chrome.runtime.sendNativeMessage = (host, message, cb) => cb({ text: "resolved" });
+    const out = await callLLM({ system: "s", user: "u" });
+    expect(out).toMatchObject({ text: "resolved", provider: "claude-code" });
   });
 
   it("keeps the unknown-provider path unchanged (no key => key error first)", async () => {

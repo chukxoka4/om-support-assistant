@@ -2,10 +2,11 @@
 
 **Status: Slices 0–2 DONE (2026-07-10).** Decisions ratified (DEC-A…E → D34–D38);
 the native-messaging bridge is built and verified live; the key-less
-`claude-code` provider is wired into the dispatcher and manifest. One acceptance
-step remains for Slice 2 — the in-Chrome side-panel smoke (needs the owner's
-Chrome; see Slice 2). **Next: Slice 3** (storage: availability, default
-resolution, third-party gate). Slices 4–7 remain. This document is the execution plan.
+`claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
+smoke passed (side-panel call returned `OK`; installer now covers all browsers).
+Slice 3 is done: availability + default-resolution + third-party gate live in
+storage. **Next: Slice 4** (options UI). Slices 5–7 remain. This document is the
+execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -446,7 +447,25 @@ entry-point file gained business logic.
 
 ---
 
-### Slice 3 — Storage: availability, default resolution, third-party gate
+### Slice 3 — Storage: availability, default resolution, third-party gate — ✅ DONE 2026-07-10
+
+**Delivered:** [lib/storage.js](../lib/storage.js) gained `KEYS.claudeCodeStatus`
++ `KEYS.allowThirdParty`; `getClaudeCodeStatus`/`setClaudeCodeStatus` (merge-patch),
+`getAllowThirdParty`/`setAllowThirdParty`; a rewritten `getAvailableProviders`
+(connector when enabled+lastPingOk → claude when keyed → gemini/openai only when
+keyed AND opt-in, in that order); and a new `resolveDefaultProvider` (stored
+default if still available → else connector → else first available).
+[providers/index.js](../providers/index.js) now calls `resolveDefaultProvider`
+instead of the inline `getDefaultProvider() || available[0]`. storage.js is 227
+lines (under the 250 hard cap — no split needed yet).
+Tests: new `tests/unit/provider-availability.test.js` (full matrix + resolution
++ back-compat); `tests/unit/providers-dispatch.test.js` extended (auto-resolve to
+claude-code). 01-PRODUCT.md provider description updated. Back-compat rule
+(never clobber a stored `default_provider`, only fill gaps) is already recorded
+in DECISIONS D34 and proven by a test.
+
+**No deltas from plan.** Entry-point label changes (human-readable provider
+names in the selects) are deferred to Slice 4 as written.
 
 **Goal:** `claude-code` becomes the default when enabled; Gemini/OpenAI are
 opt-in (per DEC-A/B/E).
