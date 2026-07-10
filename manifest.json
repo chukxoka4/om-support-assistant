@@ -10,7 +10,8 @@
     "notifications",
     "unlimitedStorage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://om.wpsiteassist.com/*",

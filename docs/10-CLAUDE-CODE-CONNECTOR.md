@@ -1,9 +1,11 @@
 # 10 — Claude Code Connector (Enterprise-seat LLM routing)
 
-**Status: Slices 0–1 DONE (2026-07-10).** Decisions ratified (DEC-A…E → D34–D38);
-the native-messaging bridge is built, tested, and verified live on the Enterprise
-seat. **Next: Slice 2** (layer-4 provider + dispatcher + manifest). Slices 3–7
-remain. This document is the execution plan.
+**Status: Slices 0–2 DONE (2026-07-10).** Decisions ratified (DEC-A…E → D34–D38);
+the native-messaging bridge is built and verified live; the key-less
+`claude-code` provider is wired into the dispatcher and manifest. One acceptance
+step remains for Slice 2 — the in-Chrome side-panel smoke (needs the owner's
+Chrome; see Slice 2). **Next: Slice 3** (storage: availability, default
+resolution, third-party gate). Slices 4–7 remain. This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -329,7 +331,35 @@ Enterprise-seat login (verify with `claude /status` or equivalent that no
 
 ---
 
-### Slice 2 — Layer-4 provider + dispatcher + manifest
+### Slice 2 — Layer-4 provider + dispatcher + manifest — ✅ DONE 2026-07-10 (code); ⏳ in-Chrome smoke pending
+
+**Delivered:** `providers/claude-code.js` (`callClaudeCode`, `pingClaudeCode`);
+`providers/index.js` gains the `claude-code` dispatcher, `KEYLESS_PROVIDERS`, the
+`mode` passthrough, and re-exports `pingClaudeCode`; `manifest.json` gains
+`"nativeMessaging"`. Tests: `tests/unit/claude-code-provider.test.js`,
+`tests/unit/providers-dispatch.test.js`; `sendNativeMessage` added to
+`tests/helpers/chrome-mock.js`. ARCHITECTURE.md layer-4 table updated.
+
+**Deltas from the plan (all conservative):**
+- Dispatcher change is minimal: the apiKey lookup/check is wrapped in
+  `if (!KEYLESS_PROVIDERS.has(chosen))`, so the keyed and unknown-provider paths
+  are byte-for-byte unchanged (unknown provider still hits the "No API key"
+  branch first — pre-existing ordering, preserved deliberately and tested).
+- No `background.js` relay needed: the side panel runs in the extension origin
+  (ARCHITECTURE.md), where `chrome.runtime.sendNativeMessage` is available.
+- No entry-point business logic added: `sidepanel.js` still imports `callLLM`
+  only to inject into the ranker; `background.js`/`options.js` make no LLM calls.
+
+> ⏳ **Remaining acceptance step (needs the owner's Chrome).** The
+> load-unpacked → side-panel-console `callLLM({ provider: "claude-code", … })`
+> smoke can't run headlessly here (requires loading the unpacked extension, the
+> generated extension ID, and `bridge/install.sh` with that ID). The transport
+> is sound by architecture (extension-origin page → native messaging), and the
+> bridge itself is already proven live (Slice 1). Run:
+> `bridge/install.sh` (paste the unpacked ID) → reload → side-panel console:
+> `import("./providers/index.js").then(m => m.callLLM({provider:"claude-code",system:"reply OK",user:"ping"})).then(console.log)`.
+> Expect `{ text: "OK", provider: "claude-code" }`. If `sendNativeMessage` is
+> somehow unavailable there, the documented fallback is the background relay (§3).
 
 **Goal:** `callLLM({ provider: "claude-code", … })` works end-to-end from the
 side panel.

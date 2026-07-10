@@ -53,6 +53,7 @@ function installChromeMock() {
     runtime: {
       getURL: vi.fn((p) => `chrome-extension://test/${p}`),
       sendMessage: vi.fn(),
+      sendNativeMessage: vi.fn(),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       lastError: null,
     },

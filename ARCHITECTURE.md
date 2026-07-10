@@ -43,7 +43,7 @@ This codebase has five layers, in this dependency direction (top calls down, nev
 ├────────────────────────────────────────────────────────────────────┤
 │ 4. Infrastructure  providers/gemini.js · providers/claude.js       │
 │                    providers/openai.js                             │
-│                    providers/claude-code.js (planned, Slice 2)     │
+│                    providers/claude-code.js (key-less, via bridge) │
 │                    bridge/claude-bridge.js (OUTSIDE the extension)  │
 │                    mcp-intercom/server.js (planned)                │
 ├────────────────────────────────────────────────────────────────────┤
