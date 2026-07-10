@@ -363,6 +363,28 @@ Enterprise-seat login (verify with `claude /status` or equivalent that no
    `claude`. Verified working under an env harsher than Chrome's (HOME+PATH only).
 Both are recorded in bridge/README.md and covered by `buildChildEnv` unit tests.
 
+**Installer hardened to cross-platform + self-diagnosing (2026-07-10)** — pulls
+Slice 7's "per-user install" and "error surfacing" concerns forward, since the
+owner is distributing to teammates on Mac/Linux/Windows and multiple browsers:
+- `bridge/install.js` (new, cross-platform; `install.sh` is now a thin shim to
+  it) runs UNDER node so it reuses `process.execPath` as the launcher's absolute
+  node path (fixes the nvm/PATH issue by construction). It preflights
+  node + claude + `claude auth status` (loggedIn/firstParty) + a loud
+  `ANTHROPIC_API_KEY`-is-set warning, installs the host manifest into **every
+  detected Chromium-family browser** (Chrome/Beta/Canary, Chromium, Brave, Edge,
+  Arc on mac/linux; HKCU registry keys on Windows), then runs a **live self-test
+  through the launcher** (ping + real transform under a minimal env) so a broken
+  setup fails at install with a clear message.
+- `bridge/install-targets.js` (new, pure) maps per-OS browser manifest locations;
+  unit-tested (`tests/unit/bridge-install-targets.test.js`).
+- **Root cause of the earlier failure captured:** the manifest had been written
+  only to Google Chrome's dir, but the owner's daily browser is **Brave** — so
+  Brave/Chromium/Edge/Arc had no manifest. The multi-browser installer fixes this.
+- Honesty: Linux paths + the Windows registry path are written from Chrome docs
+  and unverified from this macOS repo; the per-machine self-test is the proof.
+- New gitignored machine-local artifacts: `launch-host.sh`/`.cmd`,
+  `host-manifest.win.json`.
+
 > ⏳ **Remaining acceptance step (needs the owner's Chrome).** The
 > load-unpacked → side-panel-console `callLLM({ provider: "claude-code", … })`
 > smoke can't run headlessly here (requires loading the unpacked extension, the
@@ -624,7 +646,8 @@ code never writes there).
 | **CLI flag drift** | Claude Code flags change across versions. | Slice 1 verifies against the installed `claude --help`; bridge README records the tested version. |
 | **`sendNativeMessage` context** | ~~Assumed callable from the side panel.~~ **CONFIRMED 2026-07-10:** the first in-Chrome attempt reached our provider and launched the host (returned a bridge-level error, not an API-availability error), proving `sendNativeMessage` works from the side panel. No background relay needed. | Resolved. |
 | **Seat rate limits** | Connector usage draws from the same Enterprise-seat pool as interactive Claude Code sessions. Fine for polish/rank volume; watch compose-heavy days. | Note in options UI copy; revisit if limits bite. |
-| **Per-user install step** | Every machine needs bridge install + `claude` login. Not centrally deployable via the extension alone. | `bridge/install.sh` + README (Slice 1); options page points to it on ping failure (Slice 4). |
+| **Per-user install step** | Every machine needs bridge install + `claude` login. Not centrally deployable via the extension alone. Teammates span Mac/Linux/Windows + multiple browsers (owner uses Brave). | **Largely addressed:** cross-platform self-diagnosing `bridge/install.js` (preflight + multi-browser manifest install + live self-test) + expanded README troubleshooting. Options "Test connection" (Slice 4) remains the in-product check. Linux/Windows paths unverified from this repo — self-test is the per-machine proof. |
+| **macOS Gatekeeper "ripgrep.node"** | Claude Code extracts its ad-hoc-signed bundled ripgrep to `$TMPDIR` each run; a browser-launched process gets it quarantined → macOS "could not verify" notice, recurring. Not this extension's code. | Documented in README (click Done → System Settings "Allow Anyway"; `xattr` fallback). Transform-only flows don't use ripgrep; reason mode (Slice 6) does — allow it before then. Inherent to Claude Code on macOS; installer can't suppress it. |
 | **Existing stored defaults** | Users may have `default_provider: "gemini"` in sync storage. | Slice 3 back-compat rule: never clobber, only fill gaps; gated providers drop out of *availability*, which the resolution rule already handles. |
 | **Hook discipline** | Pre-commit blocks code-without-tests. | Every slice lists its tests; never `--no-verify` without explicit user approval. |
 | **Reason-mode latency** | Agentic compose (KB grep/read turns) runs 30–90 s vs a few seconds for a plain call. | Slice 6 status line + generous budget; per-call fallback: the compose UI's provider select can still pick a plain provider for a quick draft. |

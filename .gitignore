@@ -7,6 +7,8 @@ keys.json
 secrets.json
 bridge/config.json
 bridge/launch-host.sh
+bridge/launch-host.cmd
+bridge/host-manifest.win.json
 .vscode/
 .idea/
 dist/

@@ -8,55 +8,58 @@ Anthropic under Awesome Motive's Enterprise agreement.
 
 This folder lives **outside** the extension bundle — it is not served by
 `manifest.json`. See [../docs/10-CLAUDE-CODE-CONNECTOR.md](../docs/10-CLAUDE-CODE-CONNECTOR.md)
-for the full plan and [DEC-A…G in ../docs/DECISIONS.md](../docs/DECISIONS.md#d34--claude-code-is-the-default-provider-when-the-bridge-is-enabled).
+for the full plan and [DEC-A…G in ../docs/DECISIONS.md](../docs/DECISIONS.md).
 
 ## Prerequisites
 
+- **Node** (any recent LTS; tested on v20). The installer runs under Node and
+  reuses that exact node path, so nvm/homebrew installs are fine.
 - **Claude Code CLI installed and logged in to the Enterprise seat.**
-  Verify: `claude auth status` should show `authMethod: claude.ai`,
-  `apiProvider: firstParty`, and your Enterprise org.
-- **`ANTHROPIC_API_KEY` unset** in the environment. If it's set, the CLI uses the
-  personal API key instead of the Enterprise seat — which is exactly the
-  data-governance problem this bridge exists to avoid. (The bridge also strips it
-  from the child environment defensively.)
-- Node (any recent LTS; tested on v20).
+  Verify: `claude auth status` → `loggedIn: true`, `apiProvider: firstParty`,
+  your Enterprise org. If not, `claude auth login`.
+- **`ANTHROPIC_API_KEY` unset.** If set, `claude` would use that personal key
+  instead of the Enterprise seat — the exact data-governance problem this bridge
+  avoids. (The bridge strips it from the spawned process regardless, but unset it
+  in your shell too if you use `claude` interactively.)
 
-## Install (macOS)
+## Install
+
+One command, from the repo root. It preflights your setup, installs the host
+manifest into **every Chromium-family browser it finds** (Chrome, Chrome
+Beta/Canary, Chromium, Brave, Edge, Arc), and runs a **live self-test** so a
+broken setup fails here — with a clear message — not later.
 
 ```bash
-bash bridge/install.sh
+# macOS / Linux
+bash bridge/install.sh <EXTENSION_ID>
+# …or directly, any OS:
+node bridge/install.js <EXTENSION_ID>
+```
+```powershell
+# Windows
+node bridge\install.js <EXTENSION_ID>
 ```
 
-It will:
-1. `chmod +x` the bridge.
-2. Generate `bridge/launch-host.sh` (gitignored) — a `#!/bin/sh` wrapper that
-   execs an **absolute** node path. See "Why a launcher" below.
-3. Find `claude` and write `bridge/config.json` (`claudeBin`, optional `kbRoot`).
-4. Prompt for this unpacked extension's ID (chrome://extensions → Developer mode).
-5. Render the host manifest (pointing at the **launcher**) into
-   `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.optinmonster.claude_bridge.json`.
+Get `<EXTENSION_ID>` from `chrome://extensions` (or `brave://extensions`, etc.)
+→ Developer mode → Load unpacked → this repo folder → copy the ID. The ID is
+derived from the folder **path**, so it's the same across browsers on one
+machine.
 
-Linux/Windows/Chromium paths are listed as a TODO at the end of `install.sh`.
+Flags: `--kb <path>` (set the KB root when first creating `config.json`),
+`--all` (write manifests for every supported browser even if not detected),
+`--quick` (skip the live `claude` call in the self-test — ping only).
 
-> **After changing `manifest.json` permissions (e.g. adding `nativeMessaging`),
-> reload the extension** at chrome://extensions before testing. Re-running
-> `install.sh` (host-manifest/launcher changes) does **not** need a reload.
+> **After changing `manifest.json` permissions** (e.g. adding `nativeMessaging`)
+> **reload the extension** before testing. Re-running the installer (manifest /
+> launcher changes) does **not** need a reload.
 
-### Why a launcher (macOS gotchas)
+### Platform notes / honesty
 
-Chrome launches native-messaging hosts with a **minimal environment**. Two
-things break a naive setup, both handled by `install.sh` + the bridge:
-
-1. **`node` not found.** A `#!/usr/bin/env node` shebang fails when node is
-   installed via nvm/homebrew (not on Chrome's PATH) → the host dies with
-   *"Native host has exited."* Fix: the manifest points at `launch-host.sh`,
-   which hardcodes the absolute node path and uses `/bin/sh` (always present).
-2. **"Not logged in".** claude finds its Enterprise-seat login in the macOS
-   Keychain via the user-identity env vars. If Chrome's env omits
-   `HOME`/`USER`/`LOGNAME`, claude reports *"Not logged in · Please run /login"*
-   even though you're logged in interactively. Fix: the bridge backfills those
-   vars (and a usable PATH) for the spawned `claude` — see `buildChildEnv` in
-   `build-args.js`.
+- **macOS** is fully exercised. **Linux** paths (`~/.config/<vendor>/…`) and the
+  **Windows** registry path (`HKCU\Software\<vendor>\NativeMessagingHosts`) are
+  written from Chrome's native-messaging docs but haven't been run from this
+  repo — the installer's **self-test is the real proof on each machine**. If the
+  self-test passes, the transport works there.
 
 ## config.json (machine-local, gitignored)
 
@@ -76,55 +79,61 @@ bridge silently runs every call as a plain transform.
 4-byte little-endian length prefix + UTF-8 JSON, **both directions**
 (Chrome native-messaging framing — see `frame-codec.js`).
 
-Request:
-```jsonc
-{ "system": "…", "user": "…", "model": "claude-sonnet-4-6", "mode": "transform" }
-// mode: "transform" (default, no tools) | "reason" (read-only KB search)
-{ "ping": true }   // health check
-```
-Reply:
-```jsonc
-{ "text": "…", "mode": "transform" }      // success
-{ "text": "", "error": "…" }              // failure
-{ "pong": true, "ok": true, "kb": true }  // ping response (kb = KB folder present)
-```
+Request `{ system, user, model?, mode? }` — `mode`: `"transform"` (default, no
+tools) | `"reason"` (read-only KB search). `{ ping: true }` for a health check.
+Reply `{ text, mode }` on success, `{ text: "", error }` on failure,
+`{ pong: true, ok: true, kb }` to a ping.
 
 ## Test it standalone
 
-The `frame-call.js` dev harness frames a JSON request, pipes it into the bridge,
-and prints the decoded reply. Run these from the repo root:
-
 ```bash
-# health check — expect: {"pong":true,"ok":true,"kb":<bool>}
 node bridge/frame-call.js '{"ping":true}'
-
-# transform (no tools) — expect the corrected sentence back
-node bridge/frame-call.js '{"system":"You are a copy editor. Fix spelling and grammar only. Return only the corrected text.","user":"teh cat sat on teh mat and it dont move","mode":"transform"}'
-
-# reason (needs kbRoot set + present) — searches the KB before answering
-node bridge/frame-call.js '{"system":"If a local knowledge base is available, grep patterns/INDEX.md for the symptom before answering.","user":"How do I test a geo-location rule without a VPN?","mode":"reason"}'
+node bridge/frame-call.js '{"system":"Fix spelling only. Return only the text.","user":"teh cat","mode":"transform"}'
 ```
+
+## Troubleshooting (what you or a teammate may hit)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| **"Native host has exited."** | `node` not on Chrome's minimal PATH (e.g. nvm). | Handled: the manifest points at `launch-host.sh/.cmd`, which hardcodes the absolute node path. Re-run the installer if you switched node versions. |
+| **"Specified native messaging host not found."** | Manifest not in *that* browser's dir, or ID mismatch. | Re-run the installer (it does all detected browsers). Confirm the loaded extension's ID matches. |
+| **Reply: `Not logged in · Please run /login`** | `claude`'s Keychain login isn't visible to the spawned process (sparse env). | Handled: the bridge backfills `HOME`/`USER`/`LOGNAME`. If it persists, run `claude auth login`. |
+| **Reply routes to a personal key** | `ANTHROPIC_API_KEY` set. | The bridge strips it; unset it in your shell too. |
+| **macOS: "ripgrep.node … could not be verified"** | Claude Code's **bundled ripgrep** (ad-hoc signed) is extracted to `$TMPDIR` on each run; a browser-launched process gets it quarantined. Not this extension. | See below. |
+
+### The macOS "ripgrep.node" Gatekeeper notice
+
+Every macOS user will see this the first time(s) the bridge runs a call under a
+browser. It is **Claude Code's own search engine**, not this project — the same
+`ripgrep` your `claude` uses in the terminal. It's safe to allow if you trust
+your Claude Code install.
+
+- Click **Done** (never "Move to Bin").
+- To stop it blocking **reason mode** (which uses ripgrep for KB search):
+  **System Settings → Privacy & Security → “Allow Anyway”**, then re-run once and
+  choose **Open**.
+- Transform-only flows (draft polish, retone/translate, suggestions, ranker)
+  don't use ripgrep, so a still-blocked ripgrep won't affect them.
+- If it keeps recurring and you want it gone, you can clear the quarantine bit on
+  the extracted files yourself (they're recreated each run, so this is best-effort):
+  `xattr -d com.apple.quarantine "$TMPDIR".*.node` — a security-attribute change,
+  so run it only if you understand it.
 
 ## CLI flags — tested version
 
-Verified against **Claude Code v2.1.49** (2026-07-10). The bridge builds its
-invocation in `build-args.js`:
+Verified against **Claude Code v2.1.49** (2026-07-10). Built in `build-args.js`:
 
 - transform: `claude -p --output-format json --no-session-persistence --system-prompt <s> --model <m> --tools ""`
 - reason:    `… --tools "Read,Grep,Glob" --add-dir <kbRoot>` with `cwd = kbRoot`
 
-Notes for whoever bumps the CLI version:
-- The docs-era `--max-turns` flag **does not exist** in v2.1.49. `--tools ""`
-  gives a single-turn pure transform without it. Re-check `claude --help` on
-  every version bump (flags drift).
-- `--tools "Read,Grep,Glob"` (reason mode) names the *only* built-in tools that
-  exist in the session — Write/Edit/Bash are structurally absent (DEC-G). This
-  is the PII guarantee; re-verify it survives CLI upgrades.
+The docs-era `--max-turns` flag does **not** exist in v2.1.49; `--tools ""` gives
+a single-turn transform without it. `--tools "Read,Grep,Glob"` (reason) names the
+*only* built-in tools that exist — Write/Edit/Bash are structurally absent
+(DEC-G). Re-verify both on every CLI version bump (`claude --help`).
 
 ## Layer / architecture
 
-`claude-bridge.js` is **layer-4 infrastructure** (same contract as
-`providers/*.js`: strings in, `{ text }` / `{ text: "", error }` out) but its
-transport is native-messaging stdio instead of `fetch`. `frame-codec.js` and
-`build-args.js` are pure and unit-tested
-(`tests/unit/frame-codec.test.js`, `tests/unit/bridge-build-args.test.js`).
+`claude-bridge.js` is **layer-4 infrastructure** (strings in, `{ text }` /
+`{ text: "", error }` out) with a native-messaging transport. Pure, unit-tested
+helpers: `frame-codec.js` (framing), `build-args.js` (argv + child env),
+`install-targets.js` (per-OS browser locations).
