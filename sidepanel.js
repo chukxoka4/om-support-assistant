@@ -45,6 +45,16 @@ import { buildSlackSnippet } from "./lib/report-slack.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
 
 const el = (id) => document.getElementById(id);
+
+// Human labels for provider ids in the selects (dispatcher speaks ids).
+const PROVIDER_LABELS = {
+  "claude-code": "Claude (Enterprise)",
+  claude: "Claude (API key)",
+  gemini: "Gemini",
+  openai: "OpenAI"
+};
+const providerLabel = (p) => PROVIDER_LABELS[p] || p;
+
 const state = {
   lastDraftId: null,
   lastParsed: null,
@@ -185,7 +195,7 @@ async function refreshProviderSelects() {
   } else {
     for (const p of available) {
       const opt = document.createElement("option");
-      opt.value = p; opt.textContent = p;
+      opt.value = p; opt.textContent = providerLabel(p);
       if (p === current) opt.selected = true;
       defaultSel.appendChild(opt);
     }
@@ -197,7 +207,7 @@ async function refreshProviderSelects() {
     providerRow.style.display = "";
     for (const p of available) {
       const opt = document.createElement("option");
-      opt.value = p; opt.textContent = p;
+      opt.value = p; opt.textContent = providerLabel(p);
       if (p === current) opt.selected = true;
       providerSelect.appendChild(opt);
     }
@@ -1393,7 +1403,7 @@ el("generateBtn").addEventListener("click", async () => {
   }
   const providers = await getAvailableProviders();
   if (!providers.length) {
-    setStatus(el("formStatus"), "Add at least one API key in Settings.", "error");
+    setStatus(el("formStatus"), "Connect Claude Code (Test connection in Options) or add an API key in Settings.", "error");
     el("settingsSection").classList.add("open");
     return;
   }

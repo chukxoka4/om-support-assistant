@@ -15,6 +15,12 @@
     button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
     .status { margin-top: 10px; color: #0a7c2f; font-size: 13px; }
     .hint { font-size: 12px; color: #888; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #bbb; margin-right: 7px; vertical-align: middle; }
+    .dot--ok { background: #0a7c2f; }
+    .dot--err { background: #b00020; }
+    .checkbox { font-weight: 500; display: flex; align-items: center; gap: 8px; }
+    .checkbox input { width: auto; }
+    .warn { color: #b00020; }
     .import-confirm { margin-top: 14px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fafafa; }
     .import-confirm__summary { font-size: 13px; line-height: 1.6; margin-bottom: 10px; }
     .import-confirm__summary b { font-weight: 600; }
@@ -29,19 +35,38 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
   <h1>OM Support Assistant — Options</h1>
 
-  <h2>API Keys (all optional)</h2>
-  <p class="hint">Only providers with keys will appear as options. Keys are stored in Chrome sync storage.</p>
+  <h2>Claude (Enterprise via Claude Code)</h2>
+  <p class="hint">Routes drafts through your local Claude Code CLI on the Enterprise seat — <b>no API key</b>, customer data stays under Awesome Motive's agreement. Becomes the default provider once connected. Requires the bridge (see <code>bridge/README.md</code>).</p>
   <div class="row">
-    <label for="gemini-key">Gemini</label>
-    <input id="gemini-key" type="password" autocomplete="off" />
+    <span id="cc-dot" class="dot"></span>
+    <span id="cc-status-text">Not tested yet.</span>
   </div>
+  <div class="btn-row">
+    <button id="test-claude-code" class="primary">Test connection</button>
+  </div>
+  <p class="hint" id="cc-install-hint" hidden>Bridge not reachable. Install it from the repo root: <code>node bridge/install.js &lt;EXTENSION_ID&gt;</code> — see <code>bridge/README.md</code>.</p>
+
+  <h2>API Keys (optional)</h2>
+  <p class="hint">Keys are stored in Chrome sync storage. A provider only appears as an option when it's available.</p>
   <div class="row">
-    <label for="claude-key">Claude</label>
+    <label for="claude-key">Claude (direct API key)</label>
     <input id="claude-key" type="password" autocomplete="off" />
+    <p class="hint">Same destination as the connector (Anthropic), different auth — always available on a key.</p>
   </div>
+
   <div class="row">
-    <label for="openai-key">OpenAI</label>
-    <input id="openai-key" type="password" autocomplete="off" />
+    <label class="checkbox"><input type="checkbox" id="allow-third-party" /> Enable third-party providers (Gemini, OpenAI)</label>
+    <p class="hint warn" id="third-party-warning" hidden>⚠ These send customer ticket text to Google / OpenAI under your <b>personal</b> API terms — not the Enterprise agreement.</p>
+  </div>
+  <div id="third-party-fields" hidden>
+    <div class="row">
+      <label for="gemini-key">Gemini</label>
+      <input id="gemini-key" type="password" autocomplete="off" />
+    </div>
+    <div class="row">
+      <label for="openai-key">OpenAI</label>
+      <input id="openai-key" type="password" autocomplete="off" />
+    </div>
   </div>
 
   <div class="row">

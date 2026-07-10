@@ -4,12 +4,17 @@ import {
   getDefaultProvider,
   setDefaultProvider,
   getAvailableProviders,
+  getClaudeCodeStatus,
+  setClaudeCodeStatus,
+  getAllowThirdParty,
+  setAllowThirdParty,
   getAllDrafts,
   getIntercomConfig,
   setIntercomConfig,
   getReportConfig,
   setReportConfig
 } from "./lib/storage.js";
+import { pingClaudeCode } from "./providers/index.js";
 import {
   getAllEntries,
   replaceAllEntries,
@@ -22,6 +27,14 @@ import { makeIntercomClient } from "./lib/intercom-client.js";
 
 const el = (id) => document.getElementById(id);
 
+// Human labels for provider ids (entry-point concern — the dispatcher speaks ids).
+const PROVIDER_LABELS = {
+  "claude-code": "Claude (Enterprise)",
+  claude: "Claude (API key)",
+  gemini: "Gemini",
+  openai: "OpenAI"
+};
+
 let pendingImport = null; // { entries, diff }
 
 async function init() {
@@ -33,8 +46,64 @@ async function init() {
   el("intercom-key").value = intercom.apiKey || "";
   const report = await getReportConfig();
   if (el("report-author-name")) el("report-author-name").value = report.agentName || "";
+  await applyThirdPartyVisibility(await getAllowThirdParty());
+  renderClaudeCodeStatus(await getClaudeCodeStatus());
   await refreshDefaultProviderOptions();
 }
+
+// --- Claude Code connector -------------------------------------------------
+function renderClaudeCodeStatus(status) {
+  const dot = el("cc-dot");
+  const text = el("cc-status-text");
+  const hint = el("cc-install-hint");
+  dot.className = "dot";
+  if (!status || !status.lastPingAt) {
+    text.textContent = "Not tested yet.";
+    if (hint) hint.hidden = true;
+    return;
+  }
+  if (status.lastPingOk) {
+    dot.classList.add("dot--ok");
+    text.textContent = status.kb ? "Connected · knowledge base detected." : "Connected.";
+    if (hint) hint.hidden = true;
+  } else {
+    dot.classList.add("dot--err");
+    text.textContent = status.lastError ? `Not reachable: ${status.lastError}` : "Not reachable.";
+    if (hint) hint.hidden = false;
+  }
+}
+
+el("test-claude-code")?.addEventListener("click", async () => {
+  const btn = el("test-claude-code");
+  btn.disabled = true;
+  el("cc-status-text").textContent = "Testing…";
+  const res = await pingClaudeCode();
+  const status = await setClaudeCodeStatus({
+    enabled: true,
+    lastPingOk: !!res.ok,
+    lastPingAt: Date.now(),
+    kb: !!res.kb,
+    lastError: res.ok ? "" : res.error || "no response"
+  });
+  renderClaudeCodeStatus(status);
+  await refreshDefaultProviderOptions();
+  showToast("toasts", res.ok ? "Claude Code connected." : `Claude Code: ${res.error || "not reachable"}`, res.ok ? "ok" : "err");
+  btn.disabled = false;
+});
+
+// --- Third-party provider gate ---------------------------------------------
+async function applyThirdPartyVisibility(on) {
+  el("allow-third-party").checked = on;
+  el("third-party-fields").hidden = !on;
+  el("third-party-warning").hidden = !on;
+}
+
+el("allow-third-party")?.addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  await setAllowThirdParty(on);
+  await applyThirdPartyVisibility(on);
+  await refreshDefaultProviderOptions();
+});
 
 el("save-report")?.addEventListener("click", async () => {
   const agentName = el("report-author-name").value.trim();
@@ -91,7 +160,7 @@ async function refreshDefaultProviderOptions() {
   for (const p of available) {
     const opt = document.createElement("option");
     opt.value = p;
-    opt.textContent = p;
+    opt.textContent = PROVIDER_LABELS[p] || p;
     if (p === current) opt.selected = true;
     select.appendChild(opt);
   }

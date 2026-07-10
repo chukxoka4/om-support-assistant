@@ -4,9 +4,10 @@
 the native-messaging bridge is built and verified live; the key-less
 `claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
 smoke passed (side-panel call returned `OK`; installer now covers all browsers).
-Slice 3 is done: availability + default-resolution + third-party gate live in
-storage. **Next: Slice 4** (options UI). Slices 5–7 remain. This document is the
-execution plan.
+Slices 3–4 done: availability/default-resolution/third-party gate in storage,
+and the Options UI to enable/test the connector + opt into third-party providers.
+**Next: Slice 5** (report-pipeline timeout + un-pend verification). Slices 6–7
+remain. This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -503,7 +504,26 @@ never appear in availability even with keys present.
 
 ---
 
-### Slice 4 — Options UI
+### Slice 4 — Options UI — ✅ DONE 2026-07-10
+
+**Delivered:** [options.html](../options.html) + [options.js](../options.js) gained
+a "Claude (Enterprise via Claude Code)" section (status dot + **Test connection**
+→ `pingClaudeCode` re-exported from [providers/index.js](../providers/index.js) →
+writes `claudeCodeStatus` via storage; install hint on failure). Gemini/OpenAI
+key fields moved under a collapsed "Third-party providers" block gated by the
+`allowThirdParty` checkbox with a one-line data warning; direct-Claude key stays
+un-gated. Default-provider `<select>` now renders human labels via a
+`PROVIDER_LABELS` map. [sidepanel.js](../sidepanel.js) provider selects use the
+same label map (so `claude-code` shows as "Claude (Enterprise)"), and the
+"no providers" error copy now mentions Test connection, not just API keys.
+Tests: new `tests/ui/options-claude-code.test.js` (loads the real options.html,
+drives ping success/failure → status writes + dot + select membership; toggle
+on/off → visibility + availability; labelled options). Suite 451 green.
+
+**Deltas from plan:** none material. "enabled" is set implicitly by clicking
+Test connection (no separate enable checkbox) — a successful ping records
+`{enabled:true,lastPingOk:true,kb}`, a failure records `{enabled:true,lastPingOk:false,lastError}`
+so re-testing after fixing the bridge flips availability without another toggle.
 
 **Goal:** the agent can enable/test the connector and consciously opt in to
 third-party providers.
