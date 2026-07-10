@@ -158,6 +158,46 @@ If a thread sits here for a long time and nothing changes, that's a decision in 
 
 ---
 
+## OT-16 — CLARIFY gate: let compose flag ambiguity instead of guessing
+
+**Context.** The owner has global "ask a clarifying question when unclear" gates (in their CLAUDE.md). Those work in interactive Claude Code sessions but **not** in the extension: compose is a one-shot headless `claude -p` call (draft in → two rewrites out) with no channel to pause and ask the agent mid-call. Raised 2026-07-10 after the connector shipped.
+
+**Status.** Not built. Proposed shape: instruct the model that when the ticket is ambiguous or missing key info (plan, exact error, which site) it returns a `CLARIFY:` block listing what it needs **instead of** guessing a draft; the side panel renders that. Small change — compose prompt ([lib/voice.js](../lib/voice.js)) + a render branch in [sidepanel.js](../sidepanel.js) + a test. See [11-SESSION-HANDOFF-2026-07-10.md](11-SESSION-HANDOFF-2026-07-10.md).
+
+**When it matters again.** When the owner wants the connector to stop confidently drafting on under-specified tickets — the whole point of their gates.
+
+---
+
+## OT-17 — Live documentation-link validation in reason mode
+
+**Context.** Owner asked whether reason-mode drafts verify their doc links. Reason mode's allowlist is `Read,Grep,Glob` — **no web tools** — so it cites URLs already stored in the KB patterns (owner-verified when built) but cannot fetch a URL to confirm it's live/correct. Raised 2026-07-10.
+
+**Status.** Not built. Optionally enable `WebFetch` on the daemon-spawned claude, gated to validate links **already present** in the draft/pattern (never free-browse). Tradeoff: network egress from the daemon + latency. See [10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md) reason-mode invocation.
+
+**When it matters again.** If wrong/stale doc links start reaching customers and the KB-verified-URL guarantee isn't enough.
+
+---
+
+## OT-18 — Skills inside reason mode (vs the DEC-G read-only guarantee)
+
+**Context.** Owner asked if naming a skill in the prompt lets reason mode use it. support-desk's `CLAUDE.md` **is** auto-loaded (cwd=KB), and the model can `Read`/`Grep` a `SKILL.md` as reference — but skills can't **run**: invoking one needs the `Skill` tool (and most need `Bash`/`Write`), none of which are in the reason-mode allowlist. Enabling them would reopen the DEC-G/D40 read-only PII hole. Raised 2026-07-10.
+
+**Status.** Deliberately not enabled. Only revisit for a **specific** skill that is provably `Read`/`Grep`-only (no `Bash`/`Write`), which could be added to the allowlist without breaking DEC-G.
+
+**When it matters again.** When the owner names a concrete skill they want the drafter to execute — evaluate that skill's tool needs against DEC-G before touching the allowlist.
+
+---
+
+## OT-19 — File the upstream Claude Code ripgrep.node quarantine bug
+
+**Context.** Root cause of the Slice-8 Gatekeeper popup is an upstream Claude Code bug (its own quarantine-strip helper early-returns on `linker-signed` dylibs — exactly what the extracted `ripgrep.node` is). Fully documented + reproduced 2026-07-10.
+
+**Status.** Draft ready in [UPSTREAM-BUG-claude-code-ripgrep-quarantine.md](UPSTREAM-BUG-claude-code-ripgrep-quarantine.md); **not filed**. Public repo (`anthropics/claude-code`), owner posts under their own account — do not auto-post. If Anthropic fixes it, the launchd daemon (D41) becomes optional.
+
+**When it matters again.** File when convenient; re-run the evidence block first if the installed CLI version has moved.
+
+---
+
 ## How to add a new thread
 
 Append. New entry as `## OT-X — short title`. Context, Status, "When it matters again." Two paragraphs each is plenty. If a thread grows beyond that, it's probably ready to graduate to a feature or bug entry.

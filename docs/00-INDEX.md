@@ -21,7 +21,9 @@ Living planning + reference docs. Read in order if you're new; jump to whichever
 - **[06-REVIEW-PLAN.md](06-REVIEW-PLAN.md)** — Q2/Q3 supervisor expectations, the May 1 reporting pitch, two-week build plan, honest gaps.
 - **[07-WPSA-REPORTER.md](07-WPSA-REPORTER.md)** — WPSiteAssist reporting tool: Friday workflow, prompt library, drift hygiene.
 - **[09-STRATEGY-AND-LAUNCH.md](09-STRATEGY-AND-LAUNCH.md)** — who's who (incl. manager Erica), the origin story, the AI Adoption Rubric as the spine, the May-8 Slack soft-launch, spawned skills, external refs.
-- **[10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md)** — execution plan for the key-less `claude-code` provider (Chrome native-messaging bridge → local Claude Code CLI on the Enterprise seat) that un-pends the LLM features, plus the read-only support-desk KB reasoning layer. Sliced (0–7) for fresh-session pickup; decisions live in DECISIONS D34–D38 + DEC-F/G.
+- **[10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md)** — execution plan + slice-by-slice status (0–8) for the key-less `claude-code` provider (Chrome native-messaging bridge → local Claude Code CLI on the Enterprise seat) that un-pends the LLM features, the read-only support-desk KB reasoning layer, and the launchd daemon that kills the macOS Gatekeeper popup. Decisions: DECISIONS D34–D41.
+- **[11-SESSION-HANDOFF-2026-07-10.md](11-SESSION-HANDOFF-2026-07-10.md)** — *read this to resume the connector work in a fresh session.* Narrative + hard-won facts (CLI flags, macOS quarantine/launchd, TCC), current runtime state on the owner's machine, open items, and "don't get this wrong" list.
+- **[UPSTREAM-BUG-claude-code-ripgrep-quarantine.md](UPSTREAM-BUG-claude-code-ripgrep-quarantine.md)** — ready-to-file (not yet filed) bug report for Anthropic: the `ripgrep.node` linker-signed quarantine-strip bug behind the Gatekeeper popup.
 - **[CONVENTIONS.md](CONVENTIONS.md)** — branch model, commit norms, pre-commit hook contract, test rules, naming, doc discipline.
 - **[SESSION-HISTORY.md](SESSION-HISTORY.md)** — which session built what; provenance index for a future owner / migration.
 
