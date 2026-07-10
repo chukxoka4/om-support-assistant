@@ -5,6 +5,7 @@ node_modules/
 .env.local
 keys.json
 secrets.json
+bridge/config.json
 .vscode/
 .idea/
 dist/

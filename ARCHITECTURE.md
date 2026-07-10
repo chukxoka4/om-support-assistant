@@ -43,6 +43,8 @@ This codebase has five layers, in this dependency direction (top calls down, nev
 ├────────────────────────────────────────────────────────────────────┤
 │ 4. Infrastructure  providers/gemini.js · providers/claude.js       │
 │                    providers/openai.js                             │
+│                    providers/claude-code.js (planned, Slice 2)     │
+│                    bridge/claude-bridge.js (OUTSIDE the extension)  │
 │                    mcp-intercom/server.js (planned)                │
 ├────────────────────────────────────────────────────────────────────┤
 │ 5. Data            prompts/om-seeds.json · prompts/house-style.md  │
@@ -115,6 +117,8 @@ The only place that talks to storage, the DOM, the active tab, or external HTTP 
 Provider SDK wrappers. One file per provider, each exposing `callProvider({ system, user, maxTokens, ... }) → string`. The dispatcher in [providers/index.js](providers/index.js) is the only thing in layer 2 that imports them.
 
 The Intercom MCP server at `mcp-intercom/server.js` (planned) is also infrastructure: it's a transport wrapper around `lib/intercom-client.js`.
+
+The **`bridge/`** folder (`claude-bridge.js` + `frame-codec.js` + `build-args.js`) is infrastructure that lives **outside the extension bundle** — it is a Chrome native-messaging host, not served by `manifest.json`. Like `mcp-intercom/`, it is a transport wrapper (native-messaging stdio → the `claude` CLI). Because it isn't part of the manifest-served code, the "no new runtime dependencies in the extension" rule is preserved — and the bridge itself uses only Node builtins anyway. `providers/claude-code.js` (Slice 2) is the layer-4 provider inside the extension that talks to it; the bridge is what runs on the far side of `chrome.runtime.sendNativeMessage`. See [bridge/README.md](bridge/README.md) and [docs/10-CLAUDE-CODE-CONNECTOR.md](docs/10-CLAUDE-CODE-CONNECTOR.md).
 
 **Allowed**:
 - Provider-specific HTTP shape, auth headers, error mapping.

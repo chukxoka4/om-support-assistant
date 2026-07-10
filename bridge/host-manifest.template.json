@@ -1,0 +1,7 @@
+{
+  "name": "com.optinmonster.claude_bridge",
+  "description": "OM Support Assistant — Claude Code native-messaging bridge",
+  "type": "stdio",
+  "path": "__BRIDGE_PATH__",
+  "allowed_origins": ["chrome-extension://__EXTENSION_ID__/"]
+}

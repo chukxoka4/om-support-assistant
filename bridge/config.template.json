@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to config.json (gitignored) and edit. Machine-local only; these paths never enter the extension or chrome.storage.",
+  "claudeBin": "/absolute/path/to/claude",
+  "kbRoot": "/Users/you/Projects/support-desk"
+}

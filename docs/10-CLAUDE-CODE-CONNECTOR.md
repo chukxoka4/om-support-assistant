@@ -1,7 +1,9 @@
 # 10 — Claude Code Connector (Enterprise-seat LLM routing)
 
-**Status: Slice 0 DONE (2026-07-10) — decisions ratified, no code yet.**
-Slices 1–7 remain. This document is the execution plan.
+**Status: Slices 0–1 DONE (2026-07-10).** Decisions ratified (DEC-A…E → D34–D38);
+the native-messaging bridge is built, tested, and verified live on the Enterprise
+seat. **Next: Slice 2** (layer-4 provider + dispatcher + manifest). Slices 3–7
+remain. This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -36,11 +38,14 @@ code.claude.com docs on 2026-07-10, via the claude-code-guide agent):
   automatically when `ANTHROPIC_API_KEY` is unset.
 - JSON result shape: `{ "result": "<final text>", "session_id", "total_cost_usd",
   "usage": { input_tokens, output_tokens, ... } }`.
-- Tool restriction: there is no single "disable tools" flag; the bridge relies
-  on `--max-turns 1` plus a system prompt that is a pure text transform. If
-  tighter lockdown is wanted, `--allowedTools ""` / permission flags exist —
-  **verify the current flag names at implementation time**; do not trust this
-  doc over `claude --help`.
+- Tool restriction: **UPDATED at implementation (Slice 1, CLI v2.1.49,
+  2026-07-10).** `--max-turns` **does not exist** in this CLI version. The
+  installed CLI has `--tools "<list>"` — `--tools ""` disables ALL built-in
+  tools, which gives a single-turn pure transform without needing `--max-turns`.
+  So transform mode uses `--tools ""`; reason mode uses `--tools "Read,Grep,Glob"`
+  (only those three tools exist → Write/Edit/Bash structurally absent, DEC-G).
+  Re-verify against `claude --help` on every version bump — do not trust this
+  doc over the installed CLI.
 - Alternative: `@anthropic-ai/claude-agent-sdk` `query()` also reuses the CLI
   login. **Not chosen** for v1 — it's an npm runtime dependency; the CLI-spawn
   bridge is zero-dependency (Node builtins only). Revisit if per-call CLI
@@ -248,9 +253,44 @@ committed.
 
 ---
 
-### Slice 1 — The bridge (outside the extension)
+### Slice 1 — The bridge (outside the extension) — ✅ DONE 2026-07-10
 
-**Goal:** a working native-messaging host that turns
+**Delivered:** `bridge/{claude-bridge.js, frame-codec.js, build-args.js,
+frame-call.js, install.sh, README.md, config.template.json,
+host-manifest.template.json}` + `bridge/config.json` (gitignored). Tests:
+`tests/unit/frame-codec.test.js`, `tests/unit/bridge-build-args.test.js`.
+ARCHITECTURE.md layer-4 table updated. Verified against **CLI v2.1.49** on the
+**Awesome Motive Enterprise** seat (`claude auth status` = claude.ai/firstParty,
+`ANTHROPIC_API_KEY` unset).
+
+**Implementation deltas from this doc (all verified live):**
+- `--max-turns` gone → transform uses `--tools ""`; reason uses
+  `--tools "Read,Grep,Glob"` + `--add-dir <kbRoot>` (see §1 update above).
+- Added `--no-session-persistence` (one-shot; nothing written to `~/.claude`).
+- Spawn-arg construction extracted early into the pure `build-args.js` (Slice 6
+  asked for this) so mode selection + the DEC-G lockdown are unit-tested now.
+- Bridge strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (force Enterprise
+  OAuth) and `CLAUDECODE`/`CLAUDE_CODE_SSE_PORT` (defuse the nested-session
+  guard) from the child env.
+- User text is piped via **stdin**, not argv (no ARG_MAX / escaping issues).
+- `frame-call.js` is a durable in-repo dev harness (replaces the planned
+  ad-hoc `echo`-into-bridge command); README documents the exact commands.
+
+**Round-trip results:** transform fixed "teh cat sat on teh mat and it dont
+move" → "The cat sat on the mat and it didn't move." Reason mode grepped the KB
+and returned the `?omip=IP_ADDRESS` geo-test technique **with the doc URL**
+(early Slice-6 KB-efficacy proof). Cold spawn ≈ 5 s (transform), ≈ 26 s (reason).
+
+> ⚠️ **Discrepancy for Slice 6 — `support-desk` is NOT a git repo.** This doc
+> (§6, Slice 6 DEC-G check) assumes it's git-versioned and uses
+> `git -C <kbRoot> status --porcelain` as the PII acceptance check. That command
+> errors ("not a git repository") on the actual KB. The DEC-G *structural*
+> guarantee still holds (reason mode's `--tools "Read,Grep,Glob"` excludes
+> Write/Edit/Bash), but **Slice 6 must replace the git check** with a
+> no-new-files check (e.g. snapshot `find <kbRoot> -newer <stamp>` before/after,
+> or a mtime diff). Flagged, not silently resolved.
+
+**Original goal:** a working native-messaging host that turns
 `{ system, user, model }` stdin frames into `{ text }` / `{ text: "", error }`
 frames by spawning `claude -p`.
 
@@ -545,7 +585,7 @@ code never writes there).
 | **Existing stored defaults** | Users may have `default_provider: "gemini"` in sync storage. | Slice 3 back-compat rule: never clobber, only fill gaps; gated providers drop out of *availability*, which the resolution rule already handles. |
 | **Hook discipline** | Pre-commit blocks code-without-tests. | Every slice lists its tests; never `--no-verify` without explicit user approval. |
 | **Reason-mode latency** | Agentic compose (KB grep/read turns) runs 30–90 s vs a few seconds for a plain call. | Slice 6 status line + generous budget; per-call fallback: the compose UI's provider select can still pick a plain provider for a quick draft. |
-| **KB write exposure** | Any tool beyond Read/Grep/Glob in reason mode could let ticket PII reach the git-versioned KB. | DEC-G structural allowlist + the Slice 6 `git status --porcelain` acceptance check on every CLI version bump. |
+| **KB write exposure** | Any tool beyond Read/Grep/Glob in reason mode could let ticket PII reach the KB. | DEC-G structural lockdown (`--tools "Read,Grep,Glob"` — Write/Edit/Bash don't exist) — **verified on CLI v2.1.49 in Slice 1**. NOTE: the KB is **not** a git repo, so the acceptance check must be a no-new-files scan, not `git status` (see Slice 1 discrepancy note). |
 
 ---
 
