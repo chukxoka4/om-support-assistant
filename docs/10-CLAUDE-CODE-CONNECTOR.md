@@ -4,10 +4,12 @@
 the native-messaging bridge is built and verified live; the key-less
 `claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
 smoke passed (side-panel call returned `OK`; installer now covers all browsers).
-Slices 3–5 done: storage rules, Options + side-panel UI, and the provider-aware
-polish timeout — the LLM-features pend is lifted (see 09-STRATEGY-AND-LAUNCH.md).
-A live 5-flow verification remains (owner's Chrome; see Slice 5). **Next: Slice 6**
-(KB reasoning layer). Slice 7 (hardening) remains. This document is the execution plan.
+Slices 3–6 done: storage rules, Options + side-panel UI, the provider-aware
+polish timeout (pend lifted, see 09-STRATEGY-AND-LAUNCH.md), and the KB reasoning
+layer (compose greps the read-only KB; DEC-G verified byte-identical). A live
+5-flow verification remains (owner's Chrome; see Slice 5). **Next: Slice 7**
+(optional hardening: warm-port latency, pre-warm ping, error surfacing, final
+docs sweep). This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -628,7 +630,46 @@ keys configured; report typo demonstrably polished; `npm test` green.
 
 ---
 
-### Slice 6 — KB reasoning layer (support-desk) — after Slice 5
+### Slice 6 — KB reasoning layer (support-desk) — ✅ DONE 2026-07-10
+
+**Delivered:** [lib/compose.js](../lib/compose.js) passes `mode: "reason"` and
+requests the KB instruction; [lib/voice.js](../lib/voice.js) gained a conditional
+`KB_REASONING` block (grep `patterns/INDEX.md` → read matching section → prefer
+verified patterns → cite the doc URL), added via `includeKbReasoning` (compose
+only). [sidepanel.js](../sidepanel.js) shows "Consulting the knowledge base…
+(up to a minute)" when the resolved provider is `claude-code`. DECISIONS gained
+DEC-F → D39 and DEC-G → D40; 01-PRODUCT.md updated.
+Tests: `tests/unit/voice-kb-reasoning.test.js` (block present only when
+requested; conditional phrasing), `tests/unit/compose-reason-mode.test.js`
+(mode passed, KB instruction injected, parsing unaffected); the bridge
+degradation matrix is covered by `bridge-build-args.test.js` (resolveMode +
+reason/transform/fallback). Suite 466 green.
+
+**Live verification (via the bridge, headless):**
+- **DEC-G / no-writes (PASS, strong):** a reason-mode call on a ticket carrying a
+  fake email + ticket-ref + URL left the KB **byte-identical** — 124 files
+  before and after, all content hashes unchanged. Confirms the read-only
+  allowlist took effect on CLI v2.1.49. (This is the no-new-files + hash scan
+  that **replaces** the planned `git status` check, since support-desk is not a
+  git repo — flagged back in Slice 1.)
+- **Reason mode works:** greps the KB and drafts the `?omip=IP_ADDRESS` technique
+  with the KB's verified doc URL (`.../how-to-geo-target-your-optins/`).
+- **KB-efficacy contrast (HONEST CAVEAT):** the same question in `transform` mode
+  *also* produced `?omip=` — the base model already knows that technique, so this
+  example under-demonstrates the KB. The observable difference was URL accuracy:
+  reason cited the KB-verified URL; transform *guessed* a different one
+  (`.../how-to-test-optinmonster-with-a-specific-ip-address/`). A genuinely
+  KB-only fact (a niche documented cause/fix) would show a starker contrast; the
+  `?omip` case is no longer ideal because it has entered general knowledge.
+
+**Deltas from plan:** reason-mode flags already confirmed live in Slice 1
+(`--tools "Read,Grep,Glob" --add-dir`; no `--max-turns` to tune). No compose
+timeout added (compose had none; sendNativeMessage tolerates the ~30 s wait — the
+new status line sets expectations).
+
+---
+
+#### Original Slice 6 plan (for reference)
 
 **Goal (DEC-F/G):** draft composition reasons *with* the local knowledge base —
 the model itself searches `patterns/` and `drafts/` during generation — while

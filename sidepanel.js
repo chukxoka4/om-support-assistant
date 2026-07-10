@@ -1,7 +1,7 @@
 import { compose } from "./lib/compose.js";
 import {
   getApiKeys, setApiKeys,
-  getDefaultProvider, setDefaultProvider, getAvailableProviders,
+  getDefaultProvider, setDefaultProvider, getAvailableProviders, resolveDefaultProvider,
   getClaudeCodeStatus, setClaudeCodeStatus, getAllowThirdParty, setAllowThirdParty,
   getTaxonomy, addTaxonomyValue,
   getAllDrafts, updateDraft,
@@ -1466,7 +1466,10 @@ el("generateBtn").addEventListener("click", async () => {
   }
   el("generateBtn").disabled = true;
   el("suggestionStrip").hidden = true;
-  el("output").innerHTML = '<div class="loading">Thinking…</div>';
+  // Reason mode (the connector consulting the KB) is an agentic run — 30–90 s.
+  // Set expectations so the wait doesn't look like a hang.
+  const willConsultKb = (v.provider || (await resolveDefaultProvider())) === "claude-code";
+  el("output").innerHTML = `<div class="loading">${willConsultKb ? "Consulting the knowledge base… (this can take up to a minute)" : "Thinking…"}</div>`;
   setStatus(el("formStatus"), "");
   try {
     const { conversationId, ticketUrl } = await getCurrentTicket();

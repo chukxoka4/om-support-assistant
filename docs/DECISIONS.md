@@ -388,6 +388,26 @@ Format: short. Two paragraphs maximum per decision. If a decision needs more tha
 
 ---
 
+## D39 — Two bridge call modes; compose reasons with the KB (transform vs reason)
+
+**Decision.** The Claude Code bridge supports two modes. `transform`: stateless, **no tools** (`--tools ""`), a pure text transform — used by polish, retone/translate, suggestions, and the ranker. `reason`: agentic, working directory = the local support-desk KB, tools locked to the read-only set `Read,Grep,Glob` — used only by draft composition ([lib/compose.js](../lib/compose.js)), so the model greps `patterns/INDEX.md` and reads matching sections as part of drafting. The KB instruction ([lib/voice.js](../lib/voice.js)) is phrased conditionally so it's harmless when no tools/KB are present. DEC-F of [10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md); ratified 2026-07-10, shipped Slice 6.
+
+**Why.** Verified support patterns beat general knowledge for OM-specific tickets, and the model citing the KB's verified doc URL beats it guessing one. Only compose pays the agentic latency (30–90 s); the mechanical transforms stay fast. Agnosticism is preserved — HTTP providers ignore `mode`, and `claude-code` with no KB silently runs `transform`, so teammates without the KB get byte-identical plain-LLM behavior.
+
+**Revisit when.** Reason-mode latency proves too costly for daily drafting (fall back to transform + a manual "consult KB" button), or a second call site genuinely needs KB reasoning.
+
+---
+
+## D40 — The KB is strictly read-only; no ticket PII can reach it
+
+**Decision.** Reason mode's tool allowlist is exactly `Read,Grep,Glob` — `Write`, `Edit`, and `Bash` are **not** in it, so on the installed CLI they don't exist in the session. The extension never writes to support-desk (no kb-append, no draft write-back). Ticket text flowing to Anthropic for inference is accepted (Claude Enterprise is the processor); ticket text landing on disk / in the KB is not. DEC-G; ratified 2026-07-10, shipped Slice 6.
+
+**Why.** support-desk is the owner's durable KB built over ~68 sessions; polluting it with raw customer PII would be a governance failure. Making the guarantee **structural** (the destructive tools simply aren't available) is stronger than a prompt instruction. Verified on CLI v2.1.49: a reason-mode run on a ticket carrying a fake email/ticket-ref/URL left the KB **byte-identical** (124 files, all content hashes unchanged). NOTE: support-desk is **not** a git repo, so the acceptance check is a no-new-files + content-hash scan, not `git status --porcelain` (re-run it on every CLI version bump).
+
+**Revisit when.** A future feature genuinely needs write-back to the KB — at which point design an explicit, reviewed, PII-scrubbed append path; do not loosen the reason-mode allowlist.
+
+---
+
 ## How to add a new decision
 
 Append to this file. New entry as `## DXX — short title`. Decision · Why · Revisit when. Two paragraphs max. If you can't fit it in two paragraphs, the decision is probably not yet decided — keep iterating.
