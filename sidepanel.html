@@ -103,6 +103,13 @@
     #settingsSection.open { display: block; }
 
     .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .settings-subhead { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); margin: 14px 0 6px; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #bbb; margin-right: 6px; vertical-align: middle; }
+    .dot--ok { background: #0a7c2f; }
+    .dot--err { background: #b00020; }
+    .checkbox { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+    .checkbox input { width: auto; }
+    .meta--warn { color: #b00020; }
     .status { font-size: 12px; margin-top: 8px; }
     .status.error { color: var(--danger); }
     .status.ok { color: var(--success); }
@@ -386,17 +393,35 @@
   <button type="button" id="toggleSettings" class="settings-toggle">&#9881; Settings</button>
 
   <div id="settingsSection" class="card">
+    <div class="settings-subhead">Claude (Enterprise via Claude Code)</div>
     <div class="field">
-      <label for="geminiKey">Gemini API key</label>
-      <input type="password" id="geminiKey" autocomplete="off" placeholder="AIza..." />
+      <div class="meta">Routes drafts through your local Claude Code CLI on the Enterprise seat — no API key. Becomes the default once connected. Requires the bridge (see bridge/README.md).</div>
+      <div style="margin-top:8px"><span id="ccDot" class="dot"></span><span id="ccStatusText">Not tested yet.</span></div>
+      <div class="btn-row" style="margin-top:8px">
+        <button id="testClaudeCode" class="primary">Test connection</button>
+      </div>
+      <div class="meta meta--warn" id="ccInstallHint" hidden>Bridge not reachable. Install it from the repo root: node bridge/install.js &lt;EXTENSION_ID&gt; — see bridge/README.md.</div>
     </div>
+
+    <div class="settings-subhead">API keys (optional)</div>
     <div class="field">
-      <label for="claudeKey">Claude API key</label>
+      <label for="claudeKey">Claude (direct API key)</label>
       <input type="password" id="claudeKey" autocomplete="off" placeholder="sk-ant-..." />
+      <div class="meta">Same destination as the connector (Anthropic), different auth — always available on a key.</div>
     </div>
     <div class="field">
-      <label for="openaiKey">OpenAI API key</label>
-      <input type="password" id="openaiKey" autocomplete="off" placeholder="sk-..." />
+      <label class="checkbox"><input type="checkbox" id="allowThirdParty" /> Enable third-party providers (Gemini, OpenAI)</label>
+      <div class="meta meta--warn" id="thirdPartyWarning" hidden>⚠ These send customer ticket text to Google / OpenAI under your personal API terms — not the Enterprise agreement.</div>
+    </div>
+    <div id="thirdPartyFields" hidden>
+      <div class="field">
+        <label for="geminiKey">Gemini API key</label>
+        <input type="password" id="geminiKey" autocomplete="off" placeholder="AIza..." />
+      </div>
+      <div class="field">
+        <label for="openaiKey">OpenAI API key</label>
+        <input type="password" id="openaiKey" autocomplete="off" placeholder="sk-..." />
+      </div>
     </div>
     <div class="field">
       <label for="defaultProvider">Default provider</label>

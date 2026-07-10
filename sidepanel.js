@@ -2,6 +2,7 @@ import { compose } from "./lib/compose.js";
 import {
   getApiKeys, setApiKeys,
   getDefaultProvider, setDefaultProvider, getAvailableProviders,
+  getClaudeCodeStatus, setClaudeCodeStatus, getAllowThirdParty, setAllowThirdParty,
   getTaxonomy, addTaxonomyValue,
   getAllDrafts, updateDraft,
   getUnresolvedDeliveredByConversation,
@@ -25,7 +26,7 @@ import {
 } from "./lib/intercom-snapshot.js";
 import { getCustomerEmailsFromPage } from "./lib/ticket.js";
 import { rankLexical, rankLLM } from "./lib/library-rank.js";
-import { callLLM as providerCallLLM } from "./providers/index.js";
+import { callLLM as providerCallLLM, pingClaudeCode } from "./providers/index.js";
 import { computeMetrics } from "./lib/metrics.js";
 import {
   getAllEntries, getAllPendingSuggestions, bumpScore, resolveSuggestion, getEntry,
@@ -182,8 +183,64 @@ async function loadSettings() {
   if (el("intercomKey")) el("intercomKey").value = intercom.apiKey || "";
   const report = await getReportConfig();
   if (el("reportAuthorName")) el("reportAuthorName").value = report.agentName || "";
+  applyThirdPartyVisibility(await getAllowThirdParty());
+  renderClaudeCodeStatus(await getClaudeCodeStatus());
   await refreshProviderSelects();
 }
+
+// Claude Code connector status + third-party gate — mirrors the Options page.
+function renderClaudeCodeStatus(status) {
+  const dot = el("ccDot");
+  const text = el("ccStatusText");
+  const hint = el("ccInstallHint");
+  if (!dot) return;
+  dot.className = "dot";
+  if (!status || !status.lastPingAt) {
+    text.textContent = "Not tested yet.";
+    if (hint) hint.hidden = true;
+    return;
+  }
+  if (status.lastPingOk) {
+    dot.classList.add("dot--ok");
+    text.textContent = status.kb ? "Connected · knowledge base detected." : "Connected.";
+    if (hint) hint.hidden = true;
+  } else {
+    dot.classList.add("dot--err");
+    text.textContent = status.lastError ? `Not reachable: ${status.lastError}` : "Not reachable.";
+    if (hint) hint.hidden = false;
+  }
+}
+
+function applyThirdPartyVisibility(on) {
+  if (el("allowThirdParty")) el("allowThirdParty").checked = on;
+  if (el("thirdPartyFields")) el("thirdPartyFields").hidden = !on;
+  if (el("thirdPartyWarning")) el("thirdPartyWarning").hidden = !on;
+}
+
+el("testClaudeCode")?.addEventListener("click", async () => {
+  const btn = el("testClaudeCode");
+  btn.disabled = true;
+  el("ccStatusText").textContent = "Testing…";
+  const res = await pingClaudeCode();
+  const status = await setClaudeCodeStatus({
+    enabled: true,
+    lastPingOk: !!res.ok,
+    lastPingAt: Date.now(),
+    kb: !!res.kb,
+    lastError: res.ok ? "" : res.error || "no response"
+  });
+  renderClaudeCodeStatus(status);
+  await refreshProviderSelects();
+  showToast("sidepanelToasts", res.ok ? "Claude Code connected." : `Claude Code: ${res.error || "not reachable"}`, res.ok ? "ok" : "err");
+  btn.disabled = false;
+});
+
+el("allowThirdParty")?.addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  await setAllowThirdParty(on);
+  applyThirdPartyVisibility(on);
+  await refreshProviderSelects();
+});
 
 async function refreshProviderSelects() {
   const available = await getAvailableProviders();

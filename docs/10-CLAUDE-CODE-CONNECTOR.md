@@ -516,9 +516,18 @@ un-gated. Default-provider `<select>` now renders human labels via a
 `PROVIDER_LABELS` map. [sidepanel.js](../sidepanel.js) provider selects use the
 same label map (so `claude-code` shows as "Claude (Enterprise)"), and the
 "no providers" error copy now mentions Test connection, not just API keys.
-Tests: new `tests/ui/options-claude-code.test.js` (loads the real options.html,
-drives ping success/failure → status writes + dot + select membership; toggle
-on/off → visibility + availability; labelled options). Suite 451 green.
+
+**Side-panel Settings brought to full parity (2026-07-10, follow-up):** the side
+panel has its own Settings section that duplicates the provider UI; it had
+drifted (no connector section, Gemini/OpenAI still ungated). Mirrored the whole
+Options connector block + third-party gate into [sidepanel.html](../sidepanel.html)
++ [sidepanel.js](../sidepanel.js) (`renderClaudeCodeStatus`, `applyThirdPartyVisibility`,
+`testClaudeCode`/`allowThirdParty` handlers). This mirroring follows the
+codebase's existing convention (side panel already mirrors options for
+key/import/export). A UI parity test locks it so the two surfaces can't drift again.
+Tests: `tests/ui/options-claude-code.test.js` + `tests/ui/sidepanel-claude-code.test.js`
+(both drive ping success/failure → status/dot/select membership; toggle on/off →
+visibility + availability; labelled options). Suite 454 green.
 
 **Deltas from plan:** none material. "enabled" is set implicitly by clicking
 Test connection (no separate enable checkbox) — a successful ping records
