@@ -408,6 +408,16 @@ Format: short. Two paragraphs maximum per decision. If a decision needs more tha
 
 ---
 
+## D41 — launchd daemon spawns `claude`, not the browser (kills the Gatekeeper popup); revises D36
+
+**Decision.** On macOS, a launchd **user agent** (`com.optinmonster.claude_bridge_daemon`, gui domain, KeepAlive on crash) runs [bridge/bridge-daemon.js](../bridge/bridge-daemon.js) listening on a unix socket (`~/.om-claude-bridge/bridge.sock`, 0600). The browser-spawned native host ([bridge/claude-bridge.js](../bridge/claude-bridge.js)) becomes a frame relay to it, with silent fallback to the original direct spawn when the daemon is absent (Linux/Windows/teammates). This **revises D36's "no daemon" stance** for one reason only: `claude` extracts its bundled ad-hoc-signed `ripgrep.node` to TMPDIR under a **random filename on every run**, and any file created by a browser-descended process tree gets `com.apple.quarantine` → a Gatekeeper "could not verify" popup **every run**, unfixable by the user ("Allow Anyway" is per-file, and each run mints a new file — approval can never stick, by design). A launchd-descended process is outside the quarantine-propagation tree, so the files stay clean. Adversarially design-reviewed (3 lenses) before build; the premise was empirically confirmed (positive control) and every simpler alternative eliminated — including `USE_BUILTIN_RIPGREP=0` (refuted: extraction is an unconditional native require) and xattr-stripping (millisecond race, unwinnable). Verified live on 2026-07-10: a mid-flight `xattr` of the daemon-spawned extraction shows **no quarantine attr**, and the installed chain routes host → socket → daemon (`--doctor` proves it in one command).
+
+**Why the specific shape.** The relay **decodes/re-encodes frames** (never raw byte piping) so a daemon crash mid-request yields a framed error instead of a hung `sendNativeMessage` or a corrupted stream; the daemon uses `allowHalfOpen` + per-connection reply ordering + a **global** concurrency cap (2) with queue cap and a 180 s child-killing timeout (concurrent connections must not fan out into unbounded `claude` spawns on the Enterprise seat); the plist launches via a `/bin/sh` launcher that **re-resolves node at start** (an nvm-pinned absolute path dies on version bumps → silent popup regression); `launchctl enable` + explicit error-125 handling covers Login-Items/MDM blocking; `install.js --doctor` diagnoses "popups came back" in one command. Upstream note: claude 2.1.49's own quarantine-strip helper early-returns on `linker-signed` signatures — exactly what `ripgrep.node` carries — so this is fixable by Anthropic someday; the daemon is the fix we control.
+
+**Revisit when.** Anthropic ships a notarized/linker-signed-handled ripgrep (daemon becomes optional — keep the socket protocol, it's also the Slice-7 warm-port), or the daemon needs Windows/Linux parity (no Gatekeeper there; not needed).
+
+---
+
 ## How to add a new decision
 
 Append to this file. New entry as `## DXX — short title`. Decision · Why · Revisit when. Two paragraphs max. If you can't fit it in two paragraphs, the decision is probably not yet decided — keep iterating.

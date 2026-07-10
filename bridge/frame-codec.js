@@ -3,8 +3,9 @@
 // This module is pure (Buffer only) so the framing can be unit-tested without
 // touching stdin/stdout or spawning anything.
 
-// Chrome caps a single native message at 1 MB inbound / 4 GB outbound. We keep
-// a conservative guard so a corrupt length prefix can't make us buffer forever.
+// Chrome caps native messages at 4 GB extension→host but only 1 MB host→extension
+// (keep replies well under that). We keep a conservative guard so a corrupt
+// length prefix can't make us buffer forever.
 export const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 
 // Encode one JS value as a single length-prefixed frame.

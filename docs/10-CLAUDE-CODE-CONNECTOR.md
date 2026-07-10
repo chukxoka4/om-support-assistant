@@ -1,9 +1,11 @@
 # 10 — Claude Code Connector (Enterprise-seat LLM routing)
 
-**Status: ALL SLICES DONE (0–7, 2026-07-10).** Decisions ratified (DEC-A…G →
-D34–D40); the key-less `claude-code` connector is built, wired, UI-enabled,
-report-safe, KB-reasoning, and hardened. The LLM-features pend is lifted. Only
-the optional live 5-flow smoke (Slice 5, owner's Chrome) remains.
+**Status: ALL SLICES DONE (0–8, 2026-07-10).** Decisions ratified (DEC-A…G →
+D34–D40, plus D41); the key-less `claude-code` connector is built, wired,
+UI-enabled, report-safe, KB-reasoning, hardened — and Slice 8's launchd daemon
+eliminates the recurring macOS Gatekeeper "ripgrep.node" popup (verified live:
+daemon-spawned extractions carry no quarantine attr). The LLM-features pend is
+lifted. Only the optional live 5-flow smoke (Slice 5, owner's Chrome) remains.
 
 Historical note — the native-messaging bridge is built and verified live; the
 key-less `claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
@@ -770,6 +772,73 @@ is already id-ready (it serialises replies FIFO and the enqueue path can echo a
 request id) if this is picked up later — do it with a `sendNativeMessage`
 fallback and a live Chrome smoke. Pre-warm is meaningless without it (each
 `sendNativeMessage` spawns a fresh host), so it's deferred too.
+
+---
+
+### Slice 8 — launchd de-quarantine daemon — ✅ DONE 2026-07-10 (post-plan, driven by field pain)
+
+**Problem (owner-reported):** the Gatekeeper *"ripgrep.node … could not be
+verified"* popup recurred on **every** browser-routed call and could not be
+dismissed permanently — clicking Done 10+ times, "Allow Anyway" never stuck.
+Root cause chain, empirically established: `claude` extracts its bundled
+ad-hoc/`linker-signed` `ripgrep.node` to TMPDIR under a **random name each
+run** (unconditionally — even `--tools ""`); browser-descended processes
+propagate `com.apple.quarantine` to files they create; Gatekeeper approval is
+**per-file**, so it can never persist. Every user-side remedy is structurally
+dead (proven, not assumed: xattr on the install found nothing — the binary was
+never quarantined; `USE_BUILTIN_RIPGREP=0` refuted; the xattr-strip race
+unwinnable; claude's own quarantine-strip helper early-returns on linker-signed
+— upstream bug worth filing).
+
+**Fix (DEC → D41, revises D36):** run `claude` outside the browser's process
+tree. A launchd **user agent** hosts `bridge-daemon.js` on a unix socket; the
+native host becomes a frame **relay** with silent direct-mode fallback.
+Adversarially design-reviewed BEFORE building (3-lens workflow: premise
+confirmed with a positive control; launchd + protocol lenses produced 20+
+findings — all blockers/majors incorporated: decode/re-encode relay instead of
+raw piping, allowHalfOpen half-close protocol, ECONNREFUSED login-race retry,
+global concurrency cap + queue cap + 180 s child-killing timeout + orphan kill,
+/bin/sh node-re-resolving launcher instead of an nvm-pinned plist path,
+launchctl enable + error-125 (Login Items/MDM) handling, absolute-claudeBin
+refusal, TMPDIR backfill, umask 077, poisoned-decoder destroy — including the
+same latent bug fixed in the pre-existing direct mode, config mtime re-read,
+`--doctor` + `--uninstall-daemon`, stale-quarantined-file sweep).
+
+**Files:** `bridge/bridge-daemon.js`, `bridge/bridge-core.js` (shared spawn
+core), `bridge/launchd.js` (pure plist/launcher/launchctl builders),
+`claude-bridge.js` rewritten as relay-with-fallback, `install.js` extended.
+Tests: `bridge-launchd`, `bridge-daemon` (real unix sockets; semaphore cap,
+busy refusal, died-client skip, poisoned-decoder destroy), `bridge-forwarder`
+(real child process: relay, fallback, daemon-death mid-request → framed error,
+stale-socket login-race retry, 300KB payloads).
+
+**Live verification on the owner's machine (2026-07-10):** installer
+bootstrapped the agent (state=running); host self-test routed **via the
+daemon** and a real transform returned "OK"; **decisive proof:** a mid-flight
+`xattr` of the daemon-spawned `.node` extraction shows **no
+com.apple.quarantine** (browser-era files all carried it); 8 stale quarantined
+leftovers swept; `--doctor` all green. Extension code untouched — no reload
+needed; the fix is entirely bridge-side.
+
+**Degradation:** daemon absent/down → direct mode (original behavior, popups
+possible, everything else works); non-macOS → always direct (no Gatekeeper
+there). `ping` replies now carry `daemon: true|false` so routing is observable.
+
+**Post-implementation adversarial code review (3 dimensions → 18 findings →
+each independently verified; 15 confirmed, 3 refuted) — all confirmed findings
+fixed same-day:** unhandled `child.stdin` 'error' could crash the whole daemon
+(critical, empirically reproduced — claude exiting before draining stdin);
+dead-client detection was inert under allowHalfOpen ('end', not 'close', is
+what a vanished client delivers — and the guarding unit test was vacuous);
+request timeout didn't *settle* the promise → permanent semaphore-slot leak →
+wedged daemon (fixed: always-settle + SIGTERM→SIGKILL process-GROUP escalation
+via detached spawn); pings queued behind the claude semaphore (would falsely
+flip D38 availability off — now bypass it); installer: corrupt-config crash,
+win32 `--uninstall-daemon` crash, socket-override inconsistency
+(installer/doctor now resolve OM_BRIDGE_SOCK/config.sockPath identically to the
+daemon), silent bootout-poll expiry, unanchored error-125 match, manual-daemon
+takeover after bootout. Suite 496 green; daemon reinstalled and re-verified
+live (ping `daemon:true`, transform, doctor all green) after the fixes.
 
 ---
 

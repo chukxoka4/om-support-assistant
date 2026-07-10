@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 // Cross-platform installer for the OM Support Assistant Claude Code bridge.
-//   node bridge/install.js <EXTENSION_ID> [--kb <path>] [--all] [--quick]
+//   node bridge/install.js <EXTENSION_ID> [--kb <path>] [--all] [--quick] [--no-daemon]
+//   node bridge/install.js --doctor            # diagnose an existing install
+//   node bridge/install.js --uninstall-daemon  # remove the launchd helper
 //
 // Runs on macOS, Linux, and Windows. Because it runs UNDER node, it uses
 // process.execPath as the absolute node path for the launcher — which is what
 // makes native messaging work when Chrome launches the host with a minimal PATH
 // (a bare `#!/usr/bin/env node` shebang would fail under nvm/homebrew).
+//
+// On macOS it also installs a launchd USER AGENT that runs the bridge daemon:
+// the browser-spawned host then only relays frames over a unix socket, and
+// `claude` is spawned by the launchd daemon — OUTSIDE the browser's process
+// tree — so the files it extracts are never quarantined and the recurring
+// Gatekeeper "ripgrep.node could not be verified" popup is eliminated.
 //
 // It is self-diagnosing: it preflights node/claude/login/env, installs the host
 // manifest into every Chromium-family browser it finds, then runs a live
@@ -15,15 +23,30 @@
 // Linux paths and the Windows registry path are written from Chrome's docs and
 // are NOT verified from this repo; the self-test is the real proof per machine.
 
-import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { spawn, execFileSync } from "node:child_process";
+import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { dirname, join, isAbsolute } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 
 import { HOST_NAME, browserTargets, launcherName } from "./install-targets.js";
 import { encodeFrame, createFrameDecoder } from "./frame-codec.js";
+import {
+  AGENT_LABEL,
+  buildPlist,
+  buildDaemonLauncher,
+  daemonDir,
+  daemonLogPath,
+  daemonLauncherPath,
+  plistPath,
+  socketPath,
+  launchctlEnable,
+  launchctlBootout,
+  launchctlBootstrap,
+  launchctlPrint,
+} from "./launchd.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLATFORM = process.platform;
@@ -168,6 +191,7 @@ function selfTest(launcherPath, { transform }) {
       resolve({
         pingOk: !!(ping && ping.ok),
         kb: !!(ping && ping.kb),
+        daemon: !!(ping && ping.daemon),
         transformOk: transform ? !!(tx && tx.text && !tx.error) : null,
         transformText: tx?.text,
         transformError: tx?.error,
@@ -179,8 +203,197 @@ function selfTest(launcherPath, { transform }) {
   });
 }
 
+// --- launchd daemon (macOS de-quarantine helper) -------------------------------
+function runLaunchctl(argvArr) {
+  const [cmd, ...args] = argvArr;
+  return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+// The daemon and forwarder resolve the socket as OM_BRIDGE_SOCK || config.sockPath
+// || default — the installer/doctor must resolve it IDENTICALLY or they'd test a
+// socket nothing uses.
+function resolveSockPath() {
+  if (process.env.OM_BRIDGE_SOCK) return process.env.OM_BRIDGE_SOCK;
+  const cfg = loadConfig();
+  return cfg.sockPath || socketPath();
+}
+
+// One framed ping over the daemon socket. Resolves { ok, kb, daemon } or { ok:false, error }.
+function pingSocket(sockPath, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const sock = connect(sockPath);
+    const decoder = createFrameDecoder();
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve({ ok: false, error: "socket ping timed out" });
+    }, timeoutMs);
+    sock.once("connect", () => sock.write(encodeFrame({ ping: true })));
+    sock.on("data", (chunk) => {
+      for (const reply of decoder.push(chunk)) {
+        clearTimeout(timer);
+        sock.destroy();
+        resolve({ ok: !!reply.ok, kb: !!reply.kb, daemon: !!reply.daemon });
+        return;
+      }
+    });
+    sock.once("error", (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: err.code || err.message });
+    });
+  });
+}
+
+async function waitForDaemon(sockPath, totalMs = 12000) {
+  const deadline = Date.now() + totalMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await pingSocket(sockPath, 2000);
+    if (last.ok) return last;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return last || { ok: false, error: "no ping attempt completed" };
+}
+
+async function installDaemon() {
+  const uid = process.getuid();
+  const sock = resolveSockPath();
+  if (sock.length > 100) {
+    die(`socket path too long for macOS (${sock.length} > 100): ${sock}`);
+  }
+  mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
+
+  // Launcher re-resolves node at every start (nvm/homebrew bumps survive).
+  const launcher = daemonLauncherPath();
+  writeFileSync(
+    launcher,
+    buildDaemonLauncher({ nodePath: NODE, daemonPath: join(HERE, "bridge-daemon.js"), home: homedir() })
+  );
+  chmodSync(launcher, 0o755);
+  ok(`daemon launcher: ${launcher}`);
+  if (NODE.includes("/.nvm/")) {
+    warn(`node is nvm-managed (${NODE}) — the launcher re-resolves node at start, but re-run this installer if the daemon ever stops after an nvm cleanup.`);
+  }
+
+  writeFileSync(plistPath(), buildPlist({ launcherPath: launcher, logPath: daemonLogPath() }));
+  ok(`agent plist: ${plistPath()}`);
+
+  // enable (clears a prior user/MDM "disabled" bit where permitted) → bootout →
+  // wait until actually gone (bootout is async) → bootstrap.
+  try { runLaunchctl(launchctlEnable(uid)); } catch { /* fine on first install */ }
+  try { runLaunchctl(launchctlBootout(uid)); } catch { /* not loaded yet */ }
+  const gone = Date.now() + 5000;
+  let unloaded = false;
+  while (Date.now() < gone) {
+    try {
+      runLaunchctl(launchctlPrint(uid)); // still there
+      await new Promise((r) => setTimeout(r, 200));
+    } catch {
+      unloaded = true; // print errored -> job removed
+      break;
+    }
+  }
+  if (!unloaded) {
+    die(`the previous agent did not unload within 5s — run \`launchctl bootout gui/${uid}/${AGENT_LABEL}\` manually, then re-run this installer.`);
+  }
+  // A daemon started OUTSIDE launchd (manual dev run) survives bootout and
+  // would ace the self-test while serving stale code. Unlink so the new agent
+  // binds a fresh socket; the orphan keeps only its unreachable one.
+  try { unlinkSync(sock); } catch { /* absent — normal */ }
+  try {
+    runLaunchctl(launchctlBootstrap(uid, plistPath()));
+  } catch (e) {
+    // Match diagnostics against launchctl's stderr ONLY — e.message embeds the
+    // full command line (uid, home path), which could contain an incidental 125.
+    const msg = String(e.stderr || "").trim() || String(e.message || "");
+    if (/Bootstrap failed: 125|denied|disabled|not permitted/i.test(String(e.stderr || ""))) {
+      fail(`launchd refused the agent (${msg.trim().slice(0, 120)}).`);
+      warn(`This usually means Login Items / device management blocked it. Open System`);
+      warn(`Settings → General → Login Items & Extensions and enable the item (it may be`);
+      warn(`listed under the Node.js signer name, not OptinMonster), then re-run this installer.`);
+      die("daemon bootstrap blocked — the Gatekeeper-popup fix needs this agent running.");
+    }
+    die(`launchctl bootstrap failed: ${msg.trim().slice(0, 200)}`);
+  }
+  ok(`agent bootstrapped (gui/${uid}/${AGENT_LABEL})`);
+
+  const up = await waitForDaemon(sock);
+  if (!up.ok) {
+    fail(`daemon did not come up: ${up.error || "unknown"}`);
+    warn(`Check the log: ${daemonLogPath()}`);
+    die("daemon install incomplete.");
+  }
+  ok(`daemon answering on the socket (kb ${up.kb ? "readable" : "not available"})`);
+  say(`  ℹ A "background items added" notice from macOS is expected — that's this agent.`);
+  return true;
+}
+
+function uninstallDaemon() {
+  if (PLATFORM !== "darwin") {
+    say("The launchd daemon only exists on macOS — nothing to uninstall here.");
+    return;
+  }
+  const uid = process.getuid();
+  try { runLaunchctl(launchctlBootout(uid)); ok("agent booted out"); } catch { warn("agent was not loaded"); }
+  for (const f of [plistPath(), daemonLauncherPath(), resolveSockPath()]) {
+    try { unlinkSync(f); ok(`removed ${f}`); } catch { /* absent */ }
+  }
+  say("Daemon removed. The bridge falls back to direct mode (Gatekeeper popups may return).");
+}
+
+// Clean up quarantined ripgrep.node leftovers from pre-daemon browser runs.
+// Only touches hidden `.<16 hex>-00000000.node` files that carry the attr.
+function sweepQuarantinedNodeFiles() {
+  let removed = 0;
+  const dir = tmpdir();
+  let entries = [];
+  try { entries = readdirSync(dir); } catch { return 0; }
+  for (const name of entries) {
+    if (!/^\.[0-9a-f]{16}-00000000\.node$/.test(name)) continue;
+    const full = join(dir, name);
+    try {
+      execFileSync("/usr/bin/xattr", ["-p", "com.apple.quarantine", full], { stdio: ["ignore", "pipe", "pipe"] });
+      unlinkSync(full); // attr present -> stale blocked leftover
+      removed++;
+    } catch { /* no quarantine attr or already gone — leave it */ }
+  }
+  return removed;
+}
+
+async function doctor() {
+  say("Bridge doctor:");
+  const uid = process.getuid ? process.getuid() : null;
+  if (PLATFORM !== "darwin") {
+    say("  (non-macOS: no daemon — direct mode is normal here)");
+  } else {
+    existsSync(plistPath()) ? ok(`plist present: ${plistPath()}`) : fail(`plist missing — run the installer`);
+    try {
+      const out = runLaunchctl(launchctlPrint(uid));
+      const state = (out.match(/state = (\w+)/) || [])[1] || "unknown";
+      (state === "running" ? ok : fail)(`agent state: ${state}`);
+    } catch {
+      fail(`agent not loaded in gui/${uid} — Login Items may have it disabled, or run the installer`);
+    }
+    const ping = await pingSocket(resolveSockPath());
+    if (ping.ok) ok(`daemon ping ok (kb ${ping.kb ? "readable" : "unavailable"})`);
+    else fail(`daemon ping failed: ${ping.error} — log: ${daemonLogPath()}`);
+  }
+  // Forwarder end-to-end (what Chrome actually runs).
+  const launcher = join(HERE, launcherName(PLATFORM));
+  if (existsSync(launcher)) {
+    const res = await selfTest(launcher, { transform: false });
+    if (res.pingOk) ok(`host ping ok via ${res.daemon ? "DAEMON (popups eliminated)" : "DIRECT fallback (popups possible)"}`);
+    else fail(`host ping failed: ${res.error || res.stderr || "unknown"}`);
+  } else {
+    fail("host launcher missing — run the installer");
+  }
+  say("");
+}
+
 // --- main --------------------------------------------------------------------
 async function main() {
+  if (flag("--doctor")) return doctor();
+  if (flag("--uninstall-daemon")) return uninstallDaemon();
+
   say("OM Support Assistant — Claude Code bridge installer");
   say(`Platform: ${PLATFORM} | node: ${NODE}`);
   say(`Bridge:   ${BRIDGE}`);
@@ -211,7 +424,8 @@ async function main() {
     warn(`ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN is set in your shell. The bridge strips it (so it still uses the Enterprise seat), but unset it if you also use \`claude\` interactively and want the seat there too.`);
   }
 
-  // config.json
+  // config.json — the daemon REQUIRES an absolute claudeBin (launchd's PATH is
+  // minimal), so upsert it rather than leaving an old config untouched.
   const configPath = join(HERE, "config.json");
   if (!existsSync(configPath)) {
     const kb = opt("--kb") || (process.stdin.isTTY ? await ask("Path to your support-desk KB (optional, blank to skip): ") : "");
@@ -220,7 +434,29 @@ async function main() {
     writeFileSync(configPath, JSON.stringify(obj, null, 2) + "\n");
     ok(`wrote config.json`);
   } else {
-    ok(`config.json exists (left untouched)`);
+    // A corrupt config.json must not crash the installer — it's the exact tool
+    // you'd reach for to repair one. Fall back to a clean rebuild.
+    let existing;
+    try {
+      existing = JSON.parse(readFileSync(configPath, "utf8"));
+    } catch (e) {
+      warn(`config.json is corrupt (${e.message}) — rebuilding it.`);
+      existing = {};
+    }
+    if (!existing.claudeBin || !isAbsolute(existing.claudeBin) || !existsSync(existing.claudeBin)) {
+      existing.claudeBin = claudeBin;
+      writeFileSync(configPath, JSON.stringify(existing, null, 2) + "\n");
+      ok(`config.json: updated claudeBin → ${claudeBin}`);
+    } else {
+      ok(`config.json exists (claudeBin ok)`);
+    }
+    // A launchd agent is its own TCC identity: a KB under Documents/Desktop/
+    // Downloads/iCloud can be readable from Terminal yet blocked for the daemon.
+    const kbRoot = existing.kbRoot || "";
+    if (/\/(Documents|Desktop|Downloads|Library\/Mobile Documents)\//.test(kbRoot + "/")) {
+      warn(`kbRoot (${kbRoot}) is in a macOS-privacy-protected folder — the background`);
+      warn(`daemon may be denied access silently. Prefer a path like ~/Projects/.`);
+    }
   }
 
   // extension id
@@ -233,6 +469,17 @@ async function main() {
 
   say("");
   say("Installing:");
+
+  // launchd daemon first (macOS): the host self-test below should route via it.
+  let daemonInstalled = false;
+  if (PLATFORM === "darwin" && !flag("--no-daemon")) {
+    daemonInstalled = await installDaemon();
+    const swept = sweepQuarantinedNodeFiles();
+    if (swept) ok(`cleaned ${swept} stale quarantined ripgrep.node leftover(s) from pre-daemon runs`);
+  } else if (PLATFORM === "darwin") {
+    warn("--no-daemon: claude will spawn under the browser — Gatekeeper popups will recur.");
+  }
+
   const launcherPath = writeLauncher();
   ok(`launcher: ${launcherPath}`);
   const installed = installManifests(launcherPath, extId, flag("--all"));
@@ -249,6 +496,11 @@ async function main() {
     die("The bridge could not start. Check the node/claude paths above.");
   }
   ok(`ping ok (knowledge base ${result.kb ? "detected" : "not configured"})`);
+  if (daemonInstalled && !result.daemon) {
+    fail("host reached claude via DIRECT mode even though the daemon was installed —");
+    die(`the popup fix is not active. Run \`node bridge/install.js --doctor\` and check ${daemonLogPath()}.`);
+  }
+  if (result.daemon) ok("host routes via the launchd daemon — Gatekeeper popups eliminated");
   if (result.transformOk === false) {
     fail(`transform failed: ${result.transformError || result.stderr || "(no detail)"}`);
     warn(`Common cause: claude not logged in, or login not visible to a spawned process.`);
@@ -261,12 +513,12 @@ async function main() {
   say(`  1. Load the unpacked extension in each browser you use (chrome://extensions → Developer mode → Load unpacked → this repo).`);
   say(`     The extension ID must match what you gave here (${extId}); the ID is derived from the folder path, so it's the same across browsers.`);
   say(`  2. After changing manifest.json permissions, reload the extension.`);
-  if (PLATFORM === "darwin") {
+  if (PLATFORM === "darwin" && daemonInstalled) {
     say("");
-    say("  macOS note: the first time a call runs, macOS may show a one-time notice about");
-    say('  "ripgrep.node" ("could not verify free of malware"). That is Claude Code\'s bundled');
-    say("  search engine (ad-hoc signed), not this extension. Click Done, then allow it in");
-    say("  System Settings → Privacy & Security → “Allow Anyway”. See bridge/README.md.");
+    say("  macOS: claude now runs under a launchd agent, so the recurring Gatekeeper");
+    say('  "ripgrep.node" popup is gone. If it ever returns, the daemon has stopped —');
+    say("  run `node bridge/install.js --doctor`. The agent shows up in System Settings");
+    say("  → Login Items (possibly under the Node.js signer name) — leave it enabled.");
   }
   say("");
 }
