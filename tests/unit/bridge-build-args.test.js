@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildClaudeInvocation,
+  buildChildEnv,
   resolveMode,
   DEFAULT_MODEL,
   REASON_TOOLS,
@@ -98,5 +99,63 @@ describe("buildClaudeInvocation — reason (DEC-F/G)", () => {
   it("falls back to transform when kbRoot is unset (default install)", () => {
     const inv = buildClaudeInvocation({ system: "s", mode: "reason", transformCwd: "/tmp" });
     expect(inv.effectiveMode).toBe("transform");
+  });
+});
+
+describe("buildChildEnv", () => {
+  it("strips the keys that would bypass the Enterprise seat or trip the guard", () => {
+    const env = buildChildEnv(
+      {
+        ANTHROPIC_API_KEY: "sk-personal",
+        ANTHROPIC_AUTH_TOKEN: "tok",
+        CLAUDECODE: "1",
+        CLAUDE_CODE_SSE_PORT: "5000",
+        HOME: "/Users/me",
+        PATH: "/usr/bin",
+      },
+      { userInfo: { username: "me", homedir: "/Users/me" }, claudeBin: "/opt/claude/bin/claude" }
+    );
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
+  });
+
+  it("backfills HOME/USER/LOGNAME from userInfo when Chrome's env omits them", () => {
+    const env = buildChildEnv(
+      { PATH: "/usr/bin" },
+      { userInfo: { username: "me", homedir: "/Users/me" }, claudeBin: "/bin/claude" }
+    );
+    expect(env.HOME).toBe("/Users/me");
+    expect(env.USER).toBe("me");
+    expect(env.LOGNAME).toBe("me");
+  });
+
+  it("does not clobber identity vars that are already present", () => {
+    const env = buildChildEnv(
+      { HOME: "/keep", USER: "real", LOGNAME: "real", PATH: "/usr/bin" },
+      { userInfo: { username: "other", homedir: "/other" }, claudeBin: "" }
+    );
+    expect(env.HOME).toBe("/keep");
+    expect(env.USER).toBe("real");
+  });
+
+  it("ensures a usable PATH including the claude binary's directory", () => {
+    const env = buildChildEnv(
+      { PATH: "/custom" },
+      { userInfo: {}, claudeBin: "/Users/me/.local/bin/claude" }
+    );
+    const parts = env.PATH.split(":");
+    expect(parts).toContain("/custom");
+    expect(parts).toContain("/usr/bin");
+    expect(parts).toContain("/bin");
+    expect(parts).toContain("/Users/me/.local/bin");
+  });
+
+  it("builds a PATH from scratch when the base env has none", () => {
+    const env = buildChildEnv({}, { userInfo: {}, claudeBin: "claude" });
+    expect(env.PATH.split(":")).toContain("/usr/bin");
+    // a bare 'claude' (no slash) contributes no directory
+    expect(env.PATH).not.toContain("claude");
   });
 });

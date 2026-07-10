@@ -350,6 +350,19 @@ Enterprise-seat login (verify with `claude /status` or equivalent that no
 - No entry-point business logic added: `sidepanel.js` still imports `callLLM`
   only to inject into the ranker; `background.js`/`options.js` make no LLM calls.
 
+**macOS launch gotchas found during the in-Chrome smoke (2026-07-10) — fixed:**
+1. **"Native host has exited."** Chrome launches native hosts with a minimal
+   PATH, so the bridge's `#!/usr/bin/env node` shebang couldn't find node
+   (installed via nvm). Fix: `install.sh` now generates `bridge/launch-host.sh`
+   (a `/bin/sh` wrapper with the absolute node path) and the host manifest
+   points at that, not the `.js`. `launch-host.sh` is gitignored (machine-local).
+2. **"Not logged in · Please run /login".** claude locates its Enterprise-seat
+   login in the macOS Keychain via `HOME`/`USER`/`LOGNAME`; a sparse Chrome env
+   made it think it was logged out. Fix: the bridge's new pure `buildChildEnv`
+   (build-args.js) backfills those identity vars + a usable PATH before spawning
+   `claude`. Verified working under an env harsher than Chrome's (HOME+PATH only).
+Both are recorded in bridge/README.md and covered by `buildChildEnv` unit tests.
+
 > ⏳ **Remaining acceptance step (needs the owner's Chrome).** The
 > load-unpacked → side-panel-console `callLLM({ provider: "claude-code", … })`
 > smoke can't run headlessly here (requires loading the unpacked extension, the
@@ -609,7 +622,7 @@ code never writes there).
 |---|---|---|
 | **Polish timeout** | `text-polish.js` gives the LLM **5 s**; spawning `claude -p` cold typically takes longer. Without DEC-D the report polish would *silently always fall back to originals* and look "fine" while doing nothing. | Slice 5 (provider-aware timeout) + Slice 6 pre-warm. Acceptance test explicitly proves the polish ran. |
 | **CLI flag drift** | Claude Code flags change across versions. | Slice 1 verifies against the installed `claude --help`; bridge README records the tested version. |
-| **`sendNativeMessage` context** | Assumed callable from the side panel; verified only in docs, not in this repo yet. | Slice 2 smoke test + documented background-relay contingency. |
+| **`sendNativeMessage` context** | ~~Assumed callable from the side panel.~~ **CONFIRMED 2026-07-10:** the first in-Chrome attempt reached our provider and launched the host (returned a bridge-level error, not an API-availability error), proving `sendNativeMessage` works from the side panel. No background relay needed. | Resolved. |
 | **Seat rate limits** | Connector usage draws from the same Enterprise-seat pool as interactive Claude Code sessions. Fine for polish/rank volume; watch compose-heavy days. | Note in options UI copy; revisit if limits bite. |
 | **Per-user install step** | Every machine needs bridge install + `claude` login. Not centrally deployable via the extension alone. | `bridge/install.sh` + README (Slice 1); options page points to it on ping failure (Slice 4). |
 | **Existing stored defaults** | Users may have `default_provider: "gemini"` in sync storage. | Slice 3 back-compat rule: never clobber, only fill gaps; gated providers drop out of *availability*, which the resolution rule already handles. |

@@ -6,6 +6,7 @@ node_modules/
 keys.json
 secrets.json
 bridge/config.json
+bridge/launch-host.sh
 .vscode/
 .idea/
 dist/

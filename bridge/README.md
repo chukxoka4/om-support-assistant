@@ -29,12 +29,34 @@ bash bridge/install.sh
 
 It will:
 1. `chmod +x` the bridge.
-2. Find `claude` and write `bridge/config.json` (`claudeBin`, optional `kbRoot`).
-3. Prompt for this unpacked extension's ID (chrome://extensions → Developer mode).
-4. Render the host manifest into
+2. Generate `bridge/launch-host.sh` (gitignored) — a `#!/bin/sh` wrapper that
+   execs an **absolute** node path. See "Why a launcher" below.
+3. Find `claude` and write `bridge/config.json` (`claudeBin`, optional `kbRoot`).
+4. Prompt for this unpacked extension's ID (chrome://extensions → Developer mode).
+5. Render the host manifest (pointing at the **launcher**) into
    `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.optinmonster.claude_bridge.json`.
 
 Linux/Windows/Chromium paths are listed as a TODO at the end of `install.sh`.
+
+> **After changing `manifest.json` permissions (e.g. adding `nativeMessaging`),
+> reload the extension** at chrome://extensions before testing. Re-running
+> `install.sh` (host-manifest/launcher changes) does **not** need a reload.
+
+### Why a launcher (macOS gotchas)
+
+Chrome launches native-messaging hosts with a **minimal environment**. Two
+things break a naive setup, both handled by `install.sh` + the bridge:
+
+1. **`node` not found.** A `#!/usr/bin/env node` shebang fails when node is
+   installed via nvm/homebrew (not on Chrome's PATH) → the host dies with
+   *"Native host has exited."* Fix: the manifest points at `launch-host.sh`,
+   which hardcodes the absolute node path and uses `/bin/sh` (always present).
+2. **"Not logged in".** claude finds its Enterprise-seat login in the macOS
+   Keychain via the user-identity env vars. If Chrome's env omits
+   `HOME`/`USER`/`LOGNAME`, claude reports *"Not logged in · Please run /login"*
+   even though you're logged in interactively. Fix: the bridge backfills those
+   vars (and a usable PATH) for the spawned `claude` — see `buildChildEnv` in
+   `build-args.js`.
 
 ## config.json (machine-local, gitignored)
 

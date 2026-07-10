@@ -18,10 +18,10 @@ import { spawn } from "node:child_process";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 
 import { encodeFrame, createFrameDecoder } from "./frame-codec.js";
-import { buildClaudeInvocation } from "./build-args.js";
+import { buildClaudeInvocation, buildChildEnv } from "./build-args.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -67,14 +67,15 @@ function runClaude({ system, user, model, mode }) {
       transformCwd: tmpdir(),
     });
 
-    // Force the Enterprise-seat OAuth path and defuse the nested-session guard.
-    // Chrome launches the host with a sparse env; keep what's there, strip the
-    // keys that would either bill a personal API key or trip the CC guard.
-    const env = { ...process.env };
-    delete env.ANTHROPIC_API_KEY;
-    delete env.ANTHROPIC_AUTH_TOKEN;
-    delete env.CLAUDECODE;
-    delete env.CLAUDE_CODE_SSE_PORT;
+    // Force the Enterprise-seat OAuth path, defuse the nested-session guard, and
+    // backfill the identity/PATH vars claude needs when Chrome's env is sparse.
+    let safeUser = {};
+    try {
+      safeUser = userInfo();
+    } catch {
+      /* userInfo can throw if /etc/passwd lookup fails; backfill is best-effort */
+    }
+    const env = buildChildEnv(process.env, { userInfo: safeUser, claudeBin: CLAUDE_BIN });
 
     let child;
     try {

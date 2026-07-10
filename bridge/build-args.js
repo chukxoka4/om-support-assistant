@@ -35,6 +35,34 @@ export function resolveMode(requestedMode, kbAvailable) {
 // - kbAvailable:   caller-computed boolean (host does the fs.existsSync)
 // - transformCwd:  neutral dir to run transforms in (e.g. os.tmpdir()), so no
 //                  project CLAUDE.md/settings get auto-loaded for a plain transform
+// Build the child environment for the spawned `claude`. Chrome launches native
+// hosts with a sparse environment; if HOME/USER/LOGNAME are missing, claude
+// can't locate its Enterprise-seat login in the macOS Keychain and fails with
+// "Not logged in". We strip the keys that would bypass the Enterprise seat or
+// trip the nested-session guard, then backfill identity + a usable PATH.
+// Pure: takes the base env and the resolved userInfo/claudeBin, returns a new env.
+export function buildChildEnv(baseEnv, { userInfo = {}, claudeBin = "" } = {}) {
+  const env = { ...baseEnv };
+  // Force the Enterprise-seat OAuth path; defuse the nested-session guard.
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_SSE_PORT;
+
+  if (!env.HOME && userInfo.homedir) env.HOME = userInfo.homedir;
+  if (!env.USER && userInfo.username) env.USER = userInfo.username;
+  if (!env.LOGNAME && env.USER) env.LOGNAME = env.USER;
+
+  const parts = env.PATH ? env.PATH.split(":").filter(Boolean) : [];
+  const extra = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const slash = claudeBin.lastIndexOf("/");
+  if (slash > 0) extra.push(claudeBin.slice(0, slash)); // dir of the claude binary
+  for (const p of extra) if (!parts.includes(p)) parts.push(p);
+  env.PATH = parts.join(":");
+
+  return env;
+}
+
 export function buildClaudeInvocation({
   system,
   model,
