@@ -57,6 +57,24 @@ A prompt area where you can ask qualitative questions. Use it for:
 
 ---
 
+## Building the prompt — use the in-extension generator
+
+The Audit tab has a **Build WPSA prompt** block at the top. No more hand-editing.
+
+1. Pick **Scope** — Personal or Team.
+2. Confirm dates — defaults to last full Mon → Sun.
+3. Confirm **Analyse tickets for** — defaults to your saved name (Personal) or "Team" (Team scope). Free-text, so you can build a report on a teammate by typing their name.
+4. Click **Generate prompt** → prompt appears in the textarea.
+5. Click **Copy prompt** → on your clipboard.
+6. Paste into WPSA AI, run, copy the JSON output back.
+
+The generated prompt includes the company's O+I framework alignment:
+- `primaryGrowthLever` (churn / reactivations / upgrades / cost_reduction / none)
+- `mveBootstrap` (the "scrappier alternative first" question)
+- `escalationVerdict` (playbook_only / escalate / watch)
+
+Set your name once in **Settings → Your name (for reports)** (or Options page → Reports). It serves both as the report author and as the default agent in the prompt builder.
+
 ## The Friday workflow with the Audit tab
 
 The side panel's **Weekly audit & report** section accepts the WPSA AI's JSON

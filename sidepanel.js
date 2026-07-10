@@ -7,8 +7,10 @@ import {
   getUnresolvedDeliveredByConversation,
   draftIsRevisitPending,
   getRankerMode, setRankerMode,
-  getIntercomConfig, setIntercomConfig
+  getIntercomConfig, setIntercomConfig,
+  getReportConfig, setReportConfig
 } from "./lib/storage.js";
+import { buildWpsaPrompt, previousMondayToSunday } from "./lib/prompt-generator.js";
 import {
   makeIntercomClient,
   detectTimestamp,
@@ -30,10 +32,13 @@ import {
   applySuggestion,
   replaceAllEntries, clearAll, seedIfEmpty
 } from "./lib/library.js";
-import { proposeSuggestion } from "./lib/suggestions.js";
+import { maybeProposeFromOutcome } from "./lib/suggestions.js";
+import { attachSearchableSelect } from "./lib/searchable-select.js";
+import { polishText, polishBullets } from "./lib/text-polish.js";
 import { diffImport, mergeNewOnly } from "./lib/library-import.js";
 import { showToast } from "./lib/toast.js";
-import { computeAuditMetrics } from "./lib/audit-metrics.js";
+import { computeAuditMetrics, computeAuditMetricsForRange } from "./lib/audit-metrics.js";
+import { paginate } from "./lib/paginate.js";
 import { parseWpsaJson } from "./lib/wpsa-schema.js";
 import { buildReportHtml } from "./lib/report-html.js";
 import { buildSlackSnippet } from "./lib/report-slack.js";
@@ -49,8 +54,48 @@ const state = {
   /** Hide revisit UI for this conversation until you open a different ticket (session only). */
   revisitHiddenConversationId: null,
   /** Managerial rewrite textarea open for this draft id. */
-  revisitMgrRewriteDraftId: null
+  revisitMgrRewriteDraftId: null,
+  /** Cached window id — pinned at panel mount so tab queries scope to the
+   *  side panel's own window rather than the most-recently-focused one.
+   *  Eliminates the cross-monitor race where the query returned a tab from
+   *  a different window and a draft was logged with conversation_id null. */
+  windowId: null,
+  /** Library & Learning section: which tab is active, current page per tab,
+   *  and the current Library-prompts filter chip. Per-session memory only;
+   *  resets on panel reload. */
+  libraryPanel: {
+    activeTab: "library",         // "library" | "review" | "drafts"
+    libraryPage: 1,
+    suggestionPage: 1,
+    draftsPage: 1,
+    libraryFilter: "all"          // "all" | "seed" | "generated"
+  }
 };
+
+const LL_PER_PAGE = 10;
+
+/** Resolve the side panel's own window id once and cache it. Subsequent
+ *  tab queries pass windowId: state.windowId instead of currentWindow:true. */
+async function ensureWindowId() {
+  if (state.windowId != null) return state.windowId;
+  try {
+    const w = await chrome.windows.getCurrent();
+    if (w?.id != null) state.windowId = w.id;
+  } catch {
+    /* leave null — query falls back to currentWindow:true */
+  }
+  return state.windowId;
+}
+
+/** Tab-query wrapper that prefers the cached windowId when available. */
+async function queryActiveTabInOwnWindow() {
+  const wid = await ensureWindowId();
+  const filter = wid != null
+    ? { active: true, windowId: wid }
+    : { active: true, currentWindow: true };
+  const [tab] = await chrome.tabs.query(filter);
+  return tab || null;
+}
 
 // Track which of the two input fields was focused last, for routing
 // "Send to Draft/Prompt" context-menu actions when focus has drifted.
@@ -101,6 +146,11 @@ function setDropdowns({ goal, audience, tone, mode, concise }) {
   if (tone) el("tone").value = tone;
   if (mode) el("mode").value = mode;
   el("concise").checked = !!concise;
+  // Programmatic select.value sets don't fire change events; nudge the
+  // searchable-select wrappers so their trigger labels stay in sync.
+  for (const id of ["goal", "audience", "tone", "mode"]) {
+    if (typeof dropdownHandles !== "undefined") dropdownHandles.get(id)?.refresh();
+  }
 }
 
 function setStatus(node, msg, cls = "") {
@@ -120,6 +170,8 @@ async function loadSettings() {
   el("openaiKey").value = keys.openai || "";
   const intercom = await getIntercomConfig();
   if (el("intercomKey")) el("intercomKey").value = intercom.apiKey || "";
+  const report = await getReportConfig();
+  if (el("reportAuthorName")) el("reportAuthorName").value = report.agentName || "";
   await refreshProviderSelects();
 }
 
@@ -318,6 +370,8 @@ el("saveSettings").addEventListener("click", async () => {
   if (chosen && chosen !== "— no providers configured —") await setDefaultProvider(chosen);
   const intercomKey = el("intercomKey")?.value?.trim() || "";
   await setIntercomConfig({ apiKey: intercomKey });
+  const reportAuthor = el("reportAuthorName")?.value?.trim() || "";
+  await setReportConfig({ agentName: reportAuthor });
   await refreshProviderSelects();
   setStatus(el("settingsStatus"), "Saved.", "ok");
   setTimeout(() => setStatus(el("settingsStatus"), ""), 1500);
@@ -331,6 +385,10 @@ const SELECT_FIELDS = [
   { id: "mode", key: "modes" }
 ];
 
+// Component handles per <select>. Kept so we can call refresh() after the
+// underlying option list mutates (taxonomy add) without re-attaching.
+const dropdownHandles = new Map();
+
 async function renderDropdowns() {
   const tax = await getTaxonomy();
   for (const { id, key } of SELECT_FIELDS) {
@@ -343,6 +401,20 @@ async function renderDropdowns() {
       sel.appendChild(opt);
     }
     if (current && tax[key]?.includes(current)) sel.value = current;
+    if (!dropdownHandles.has(id)) {
+      const handle = attachSearchableSelect(sel, {
+        onAddNew: async (typed) => {
+          await addTaxonomyValue(key, typed);
+          await renderDropdowns();
+          sel.value = typed;
+          dropdownHandles.get(id)?.refresh();
+          return typed;
+        }
+      });
+      if (handle) dropdownHandles.set(id, handle);
+    } else {
+      dropdownHandles.get(id).refresh();
+    }
   }
 }
 
@@ -359,6 +431,7 @@ document.querySelectorAll(".add-value-link").forEach((link) => {
 });
 
 // ---------- library picker ----------
+let libraryPickHandle = null;
 async function renderLibraryPicker() {
   const pick = el("libraryPick");
   const entries = (await getAllEntries()).sort((a, b) => b.weighted_score - a.weighted_score);
@@ -369,6 +442,11 @@ async function renderLibraryPicker() {
     const score = e.weighted_score ? ` · ${Math.round(e.weighted_score)}` : "";
     opt.textContent = `${e.scenario_title}${score}`;
     pick.appendChild(opt);
+  }
+  if (!libraryPickHandle) {
+    libraryPickHandle = attachSearchableSelect(pick);
+  } else {
+    libraryPickHandle.refresh();
   }
 }
 
@@ -824,7 +902,7 @@ async function loadCustomerHealth({ force = false } = {}) {
   if (!conversationId) { setChipHidden(true); return; }
   if (token !== healthLoadToken) return;
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await queryActiveTabInOwnWindow();
   if (!tab?.id) { setChipHidden(true); return; }
 
   const emails = await getCustomerEmailsFromPage(tab.id);
@@ -963,12 +1041,147 @@ function selectedCustomerContext() {
 
 // ---------- audit / weekly report ----------
 
-el("auditToggle")?.addEventListener("click", () => {
+el("auditToggle")?.addEventListener("click", async () => {
   const panel = el("auditPanel");
   if (!panel) return;
   const open = panel.style.display !== "none";
   panel.style.display = open ? "none" : "block";
-  if (!open) refreshAuditLiveMetrics().catch(() => {});
+  if (!open) {
+    refreshAuditLiveMetrics().catch(() => {});
+    await initPromptBuilder();
+  }
+});
+
+// ---------- prompt builder ----------
+
+async function initPromptBuilder() {
+  const startEl = el("promptWeekStart");
+  const endEl = el("promptWeekEnd");
+  const scopeEl = el("promptScope");
+  const agentEl = el("promptAgent");
+  if (!startEl || !endEl || !scopeEl || !agentEl) return;
+  // Default dates to last full Mon–Sun unless the user has already typed.
+  if (!startEl.value || !endEl.value) {
+    const { weekStart, weekEnd } = previousMondayToSunday();
+    startEl.value = weekStart;
+    endEl.value = weekEnd;
+  }
+  // Default agent based on scope + saved name.
+  const cfg = await getReportConfig();
+  if (!agentEl.value) {
+    agentEl.value = scopeEl.value === "team" ? "Team" : (cfg.agentName || "");
+  }
+  // Restore any persisted hypotheses for this date range.
+  await loadHypothesesForRange();
+}
+
+function autoFillAgentForScope() {
+  const scope = el("promptScope")?.value || "personal";
+  const agentEl = el("promptAgent");
+  if (!agentEl) return;
+  // Auto-fill ONLY when the field looks "untouched" — empty, "Team", or
+  // matching the saved author name. Preserves user edits to teammate names.
+  getReportConfig().then((cfg) => {
+    const known = [cfg.agentName || "", "Team", ""].filter(Boolean);
+    if (!agentEl.value || known.includes(agentEl.value)) {
+      agentEl.value = scope === "team" ? "Team" : (cfg.agentName || "");
+    }
+  });
+}
+
+el("promptScope")?.addEventListener("change", autoFillAgentForScope);
+
+// Re-render the live audit metrics when the user changes either date input,
+// so the Section 2 numbers reflect the chosen [from, to] window without
+// needing a panel reopen.
+el("promptWeekStart")?.addEventListener("change", () => {
+  refreshAuditLiveMetrics().catch(() => {});
+});
+el("promptWeekEnd")?.addEventListener("change", () => {
+  refreshAuditLiveMetrics().catch(() => {});
+});
+
+// Hypothesis bullets — one per non-empty line. Used by both the prompt
+// builder and the (commit B) ask polisher.
+function readHypothesesFromTextarea() {
+  const raw = el("promptHypotheses")?.value || "";
+  return raw.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+// Per-range persistence so reopening April 5–11 next month restores what
+// you were investigating. Keyed by `${weekStart}_${weekEnd}` under a single
+// chrome.storage.local entry.
+const HYPOTHESIS_STORE = "hypothesis_drafts";
+function rangeKey() {
+  const s = el("promptWeekStart")?.value;
+  const e = el("promptWeekEnd")?.value;
+  if (!s || !e) return null;
+  return `${s}_${e}`;
+}
+
+async function loadHypothesesForRange() {
+  const key = rangeKey();
+  const ta = el("promptHypotheses");
+  if (!key || !ta) return;
+  const { [HYPOTHESIS_STORE]: store = {} } = await chrome.storage.local.get(HYPOTHESIS_STORE);
+  ta.value = store[key] || "";
+}
+
+let hypothesisSaveTimer = null;
+function scheduleHypothesisSave() {
+  clearTimeout(hypothesisSaveTimer);
+  hypothesisSaveTimer = setTimeout(async () => {
+    const key = rangeKey();
+    if (!key) return;
+    const { [HYPOTHESIS_STORE]: store = {} } = await chrome.storage.local.get(HYPOTHESIS_STORE);
+    const value = el("promptHypotheses")?.value || "";
+    if (value.trim()) {
+      store[key] = value;
+    } else {
+      delete store[key];
+    }
+    await chrome.storage.local.set({ [HYPOTHESIS_STORE]: store });
+  }, 400);
+}
+
+el("promptHypotheses")?.addEventListener("input", scheduleHypothesisSave);
+el("promptWeekStart")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
+el("promptWeekEnd")?.addEventListener("change", () => { loadHypothesesForRange().catch(() => {}); });
+
+el("promptGenerate")?.addEventListener("click", async () => {
+  try {
+    // Best-effort polish on the hypothesis bullets so the analyser sees
+    // clean input. Silent: if the LLM is unavailable, originals flow
+    // through unchanged.
+    const rawBullets = readHypothesesFromTextarea();
+    const polished = rawBullets.length ? await polishBullets(rawBullets) : [];
+    const prompt = buildWpsaPrompt({
+      scope: el("promptScope").value,
+      weekStart: el("promptWeekStart").value,
+      weekEnd: el("promptWeekEnd").value,
+      agent: el("promptAgent").value,
+      hypotheses: polished
+    });
+    el("promptOutput").value = prompt;
+    setAuditStatus("promptStatus", "✓ Prompt generated. Click Copy and paste into WPSA AI.");
+  } catch (e) {
+    setAuditStatus("promptStatus", `✗ ${e.message}`, "err");
+  }
+});
+
+el("promptCopy")?.addEventListener("click", async () => {
+  const text = el("promptOutput")?.value || "";
+  if (!text.trim()) {
+    setAuditStatus("promptStatus", "Generate the prompt first.", "err");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setAuditStatus("promptStatus", "✓ Prompt copied. Paste it into WPSA AI.");
+    showToast("sidepanelToasts", "Prompt copied", "ok");
+  } catch (e) {
+    setAuditStatus("promptStatus", `✗ Copy failed: ${e.message}`, "err");
+  }
 });
 
 let lastValidatedPersonal = null;
@@ -1015,19 +1228,48 @@ el("auditTeamJson")?.addEventListener("input", () => {
   }
 });
 
+// Reads the From/To date inputs and returns a [rangeStart, rangeEnd] ISO
+// pair, end-of-day on the To input. Returns null when either date is missing
+// or the range is inverted — caller falls back to the trailing 7-day window.
+function readReportRange() {
+  const start = el("promptWeekStart")?.value;
+  const end = el("promptWeekEnd")?.value;
+  if (!start || !end) return null;
+  const rangeStart = new Date(`${start}T00:00:00.000Z`).toISOString();
+  const rangeEnd = new Date(`${end}T23:59:59.999Z`).toISOString();
+  if (new Date(rangeEnd).getTime() < new Date(rangeStart).getTime()) return null;
+  return { rangeStart, rangeEnd };
+}
+
 async function refreshAuditLiveMetrics() {
   const drafts = await getAllDrafts();
   const library = await getAllEntries();
-  const metrics = computeAuditMetrics({ drafts, library });
+  const range = readReportRange();
+  const metrics = range
+    ? computeAuditMetricsForRange({ drafts, library, ...range })
+    : computeAuditMetrics({ drafts, library });
   const lib = metrics.library;
   const sug = metrics.suggestions;
+  const inRange = !!metrics.counts;
+  const sugApplied = inRange ? sug.appliedInRange : sug.appliedThisWeek;
+  const sugRejected = inRange ? sug.rejectedInRange : sug.rejectedThisWeek;
+  const sugDeferred = inRange ? sug.deferredInRange : sug.deferredThisWeek;
+  const sugTotal = inRange ? sug.totalResolvedInRange : sug.totalResolvedThisWeek;
+  const addedSuffix = inRange
+    ? (lib.addedInRange ? ` (+${lib.addedInRange} in range)` : "")
+    : (lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : "");
+  const activityLine = inRange
+    ? `<li>Activity in range: <strong>${metrics.counts.generated}</strong> generated · <strong>${metrics.counts.sent}</strong> sent/approved · <strong>${metrics.counts.rewritten}</strong> manager rewrites · <strong>${metrics.counts.reachedOutcome}/${metrics.counts.generated}</strong> reached an outcome</li>`
+    : "";
+  const rtsLabel = inRange ? "of drafts that reached an outcome in range" : "personal review pattern";
   el("auditLiveMetrics").innerHTML = `
     <ul style="margin: 4px 0 0 16px; padding: 0; line-height: 1.7;">
-      <li>Library: <strong>${lib.total}</strong> entries${lib.addedThisWeek ? ` (+${lib.addedThisWeek} this week)` : ""}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
-      <li>Suggestions resolved this week: <strong>${sug.totalResolvedThisWeek}</strong> (${sug.appliedThisWeek} applied · ${sug.rejectedThisWeek} rejected · ${sug.deferredThisWeek} deferred), <strong>${sug.pending}</strong> pending</li>
+      ${activityLine}
+      <li>Library: <strong>${lib.total}</strong> entries${addedSuffix}, <strong>${lib.rewritesAbsorbedAllTime}</strong> rewrites absorbed</li>
+      <li>Suggestions ${inRange ? "resolved in range" : "resolved this week"}: <strong>${sugTotal}</strong> (${sugApplied} applied · ${sugRejected} rejected · ${sugDeferred} deferred), <strong>${sug.pending}</strong> pending</li>
       <li>Suggestion strip CTR: <strong>${metrics.suggestionCtr.ratePercent != null ? metrics.suggestionCtr.ratePercent + "%" : "—"}</strong>${metrics.suggestionCtr.total ? ` (${metrics.suggestionCtr.clicked}/${metrics.suggestionCtr.total})` : " (no impressions yet)"}</li>
       <li>Customer-context coverage: <strong>${metrics.customerContext.ratePercent != null ? metrics.customerContext.ratePercent + "%" : "—"}</strong>${metrics.customerContext.total ? ` (${metrics.customerContext.withContext}/${metrics.customerContext.total} replies)` : ""}</li>
-      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(personal review pattern)</em></li>
+      <li>Ready-to-Send rate: <strong>${metrics.readyToSend != null ? metrics.readyToSend + "%" : "—"}</strong> <em>(${rtsLabel})</em></li>
     </ul>`;
   return metrics;
 }
@@ -1035,13 +1277,24 @@ async function refreshAuditLiveMetrics() {
 async function gatherReportInputs() {
   const drafts = await getAllDrafts();
   const library = await getAllEntries();
-  const audit = computeAuditMetrics({ drafts, library });
-  const ask = el("auditAsk")?.value || "";
+  const range = readReportRange();
+  // Report always prefers the explicit range (even if it falls back to
+  // defaults at panel open, the inputs will be populated). If the user has
+  // cleared one of the inputs, fall back to last-7-days from now.
+  const audit = range
+    ? computeAuditMetricsForRange({ drafts, library, ...range })
+    : computeAuditMetrics({ drafts, library });
+  // Best-effort polish of the ask before the report renders. Silent: if
+  // the LLM is unavailable or slow, the original text flows through.
+  const askRaw = el("auditAsk")?.value || "";
+  const ask = askRaw.trim() ? await polishText(askRaw) : askRaw;
+  const cfg = await getReportConfig();
   return {
     personalWpsa: lastValidatedPersonal,
     teamWpsa: lastValidatedTeam,
     audit,
-    ask
+    ask,
+    reportAuthor: cfg.agentName || ""
   };
 }
 
@@ -1150,6 +1403,16 @@ el("generateBtn").addEventListener("click", async () => {
   setStatus(el("formStatus"), "");
   try {
     const { conversationId, ticketUrl } = await getCurrentTicket();
+    if (!conversationId) {
+      // Warn loudly: the draft will land without a ticket link. Future revisit
+      // card / Step 1 / Step 2 won't appear unless relinked via F7.
+      showToast(
+        "sidepanelToasts",
+        "⚠ No OM ticket detected — draft will be logged without a link. Open the ticket page in this window first if you want the revisit flow.",
+        "err",
+        8000
+      );
+    }
     const suggestionLog = lastImpressionIds.length
       ? {
           mode: lastImpressionMode,
@@ -1290,7 +1553,7 @@ async function copyVersion(key) {
 async function insertVersion(key) {
   const html = versionHtml(key);
   if (!html) return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await queryActiveTabInOwnWindow();
   if (!tab?.id) return;
   try {
     const [result] = await chrome.scripting.executeScript({
@@ -1348,6 +1611,30 @@ el("libraryToggle").addEventListener("click", async () => {
   if (panel.classList.contains("open")) await renderLibraryPanel();
 });
 
+// Tab strip — single delegated click switches active tab.
+el("llTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-tab]");
+  if (!btn) return;
+  const tab = btn.dataset.tab;
+  if (!tab || tab === state.libraryPanel.activeTab) return;
+  state.libraryPanel.activeTab = tab;
+  syncTabUI();
+});
+
+// Library filter chips — switching resets pagination to page 1.
+el("libraryFilterChips")?.addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-filter]");
+  if (!chip) return;
+  const filter = chip.dataset.filter;
+  if (!filter || filter === state.libraryPanel.libraryFilter) return;
+  state.libraryPanel.libraryFilter = filter;
+  state.libraryPanel.libraryPage = 1;
+  document.querySelectorAll("#libraryFilterChips .ll-chip").forEach((c) => {
+    c.classList.toggle("is-active", c.dataset.filter === filter);
+  });
+  renderLibraryList();
+});
+
 el("exportHistory").addEventListener("click", async () => {
   const [drafts, library] = await Promise.all([getAllDrafts(), getAllEntries()]);
   const payload = { exported_at: new Date().toISOString(), drafts, library };
@@ -1376,19 +1663,99 @@ async function renderLibraryPanel() {
     <div class="metric"><div class="num">${m.quickTransforms}</div><div class="lbl">Quick transforms</div></div>
     <div class="metric"><div class="num ${m.pendingSuggestionCount ? "warn" : ""}">${m.pendingSuggestionCount}</div><div class="lbl">Suggestions</div></div>
   `;
+  applyMetricTileAffordance();
   await Promise.all([renderLibraryList(), renderSuggestionList(), renderRecentDrafts()]);
 }
 
+// Make the three navigable metric tiles clickable (Library prompts /
+// Drafts (30d) / Suggestions). Decorates them after metricsGrid renders.
+function applyMetricTileAffordance() {
+  const grid = el("metricsGrid");
+  if (!grid) return;
+  const tiles = grid.querySelectorAll(".metric");
+  // Order matches renderLibraryPanel's HTML: 0=Ready 1=Mgr 2=Library 3=Drafts 4=Quick 5=Suggestions.
+  const map = { 2: "library", 3: "drafts", 5: "review" };
+  tiles.forEach((tile, idx) => {
+    const target = map[idx];
+    if (!target) return;
+    tile.classList.add("is-clickable");
+    tile.setAttribute("role", "button");
+    tile.setAttribute("tabindex", "0");
+    tile.dataset.jumpTo = target;
+    const handler = () => jumpToLibraryTab(target);
+    tile.addEventListener("click", handler);
+    tile.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handler(); }
+    });
+  });
+}
+
+function jumpToLibraryTab(tab) {
+  const panel = el("historyPanel");
+  if (panel && !panel.classList.contains("open")) panel.classList.add("open");
+  state.libraryPanel.activeTab = tab;
+  syncTabUI();
+  el("llTabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncTabUI() {
+  const active = state.libraryPanel.activeTab;
+  document.querySelectorAll("#llTabs .ll-tab").forEach((b) => {
+    b.classList.toggle("is-active", b.dataset.tab === active);
+  });
+  document.querySelectorAll("[data-tab-pane]").forEach((p) => {
+    p.hidden = p.dataset.tabPane !== active;
+  });
+}
+
+function renderPaginator(containerId, pg, onChange) {
+  const node = el(containerId);
+  if (!node) return;
+  if (!pg || pg.totalPages <= 1) { node.innerHTML = ""; return; }
+  node.innerHTML = `
+    <button type="button" data-pg="prev" ${pg.page <= 1 ? "disabled" : ""}>◂ Prev</button>
+    <span class="ll-page">page ${pg.page} of ${pg.totalPages}</span>
+    <button type="button" data-pg="next" ${pg.page >= pg.totalPages ? "disabled" : ""}>Next ▸</button>
+  `;
+  node.querySelector("[data-pg=prev]")?.addEventListener("click", () => {
+    if (pg.page > 1) onChange(pg.page - 1);
+  });
+  node.querySelector("[data-pg=next]")?.addEventListener("click", () => {
+    if (pg.page < pg.totalPages) onChange(pg.page + 1);
+  });
+}
+
 async function renderLibraryList() {
-  const entries = (await getAllEntries()).sort((a, b) => b.weighted_score - a.weighted_score);
+  const all = await getAllEntries();
+  const filter = state.libraryPanel.libraryFilter;
+  const filtered = all.filter((e) => {
+    if (filter === "seed") return e.source === "seed";
+    if (filter === "generated") return e.source === "generated";
+    return true;
+  }).sort((a, b) => b.weighted_score - a.weighted_score);
+
   const list = el("libraryList");
-  if (!entries.length) {
-    list.innerHTML = '<div class="empty">Library empty. Generate a reply to populate.</div>';
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty">${
+      filter === "all"
+        ? "Library empty. Generate a reply to populate."
+        : `No ${filter === "seed" ? "seed" : "auto-generated"} entries yet.`
+    }</div>`;
+    renderPaginator("libraryPaginator", { totalPages: 1, page: 1 }, () => {});
     return;
   }
-  list.innerHTML = entries.map(renderLibraryItem).join("");
-  list.querySelectorAll("[data-reuse]").forEach((b) => b.addEventListener("click", () => reuseLibrary(b.dataset.reuse, "rerun")));
-  list.querySelectorAll("[data-load]").forEach((b) => b.addEventListener("click", () => reuseLibrary(b.dataset.load, "loadform")));
+
+  const pg = paginate(filtered, state.libraryPanel.libraryPage, LL_PER_PAGE);
+  state.libraryPanel.libraryPage = pg.page;
+  list.innerHTML = pg.rows.map(renderLibraryItem).join("");
+  list.querySelectorAll("[data-reuse]").forEach((b) =>
+    b.addEventListener("click", () => reuseLibrary(b.dataset.reuse, "rerun")));
+  list.querySelectorAll("[data-load]").forEach((b) =>
+    b.addEventListener("click", () => reuseLibrary(b.dataset.load, "loadform")));
+  renderPaginator("libraryPaginator", pg, (newPage) => {
+    state.libraryPanel.libraryPage = newPage;
+    renderLibraryList();
+  });
 }
 
 function renderLibraryItem(e) {
@@ -1429,13 +1796,22 @@ async function reuseLibrary(entryId, mode) {
 }
 
 async function renderSuggestionList() {
-  const pending = await getAllPendingSuggestions();
+  const pendingAll = await getAllPendingSuggestions();
+  // Newest first.
+  const pending = [...pendingAll].sort((a, b) => {
+    const ta = new Date(a.suggestion?.created_at || 0).getTime();
+    const tb = new Date(b.suggestion?.created_at || 0).getTime();
+    return tb - ta;
+  });
   const list = el("suggestionList");
   if (!pending.length) {
     list.innerHTML = '<div class="empty">No suggestions pending.</div>';
+    renderPaginator("suggestionPaginator", { totalPages: 1, page: 1 }, () => {});
     return;
   }
-  list.innerHTML = pending.map(({ entry, suggestion }) => {
+  const pg = paginate(pending, state.libraryPanel.suggestionPage, LL_PER_PAGE);
+  state.libraryPanel.suggestionPage = pg.page;
+  list.innerHTML = pg.rows.map(({ entry, suggestion }) => {
     const a = suggestion.ai_analysis || {};
     const change = (a.proposed_changes || [])[0];
     const changesHtml = (a.proposed_changes || []).map((c) =>
@@ -1508,6 +1884,11 @@ async function renderSuggestionList() {
         }
       });
     });
+  });
+
+  renderPaginator("suggestionPaginator", pg, (newPage) => {
+    state.libraryPanel.suggestionPage = newPage;
+    renderSuggestionList();
   });
 }
 
@@ -1622,10 +2003,16 @@ async function openApplyPreview(node) {
 }
 
 async function renderRecentDrafts() {
-  const drafts = (await getAllDrafts()).slice().reverse().slice(0, 25);
+  const drafts = (await getAllDrafts()).slice().reverse();
   const list = el("historyList");
-  if (!drafts.length) { list.innerHTML = '<div class="empty">No drafts yet.</div>'; return; }
-  list.innerHTML = drafts.map((d) => {
+  if (!drafts.length) {
+    list.innerHTML = '<div class="empty">No drafts yet.</div>';
+    renderPaginator("draftsPaginator", { totalPages: 1, page: 1 }, () => {});
+    return;
+  }
+  const pg = paginate(drafts, state.libraryPanel.draftsPage, LL_PER_PAGE);
+  state.libraryPanel.draftsPage = pg.page;
+  list.innerHTML = pg.rows.map((d) => {
     const when = new Date(d.ts).toLocaleString();
     const isQuick = d.action_type === "quick-retone" || d.action_type === "quick-translate";
     const badge = isQuick
@@ -1640,6 +2027,10 @@ async function renderRecentDrafts() {
     const snippet = escapeHtml((isQuick ? stripTags(d.output_html || "") : d.output_parsed?.versionA || d.draft_input || "").slice(0, 200));
     return `<div class="history-item"><div class="hi-head"><strong>${escapeHtml(title)}</strong>${badge}</div><div class="hi-meta">${when} · ${convo} · ${d.provider || "?"}</div><div class="hi-snippet">${snippet}</div></div>`;
   }).join("");
+  renderPaginator("draftsPaginator", pg, (newPage) => {
+    state.libraryPanel.draftsPage = newPage;
+    renderRecentDrafts();
+  });
 }
 
 function stripTags(html) { return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
@@ -1647,7 +2038,7 @@ function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 
 async function getCurrentTicket() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await queryActiveTabInOwnWindow();
     if (!tab?.url) return { conversationId: null, ticketUrl: null };
     const m = tab.url.match(/^https:\/\/om\.wpsiteassist\.com\/conversation\/(\d+)/);
     return { conversationId: m ? m[1] : null, ticketUrl: tab.url };
@@ -1795,6 +2186,22 @@ async function refreshStepOneSlot() {
   bindStepOneRoot(slot.querySelector("[data-step1-root]"), d, "post_copy", "slot", null);
 }
 
+// Re-reads the draft from storage (so it sees the just-written outcome /
+// outcome_at / manager_rewrite_text) and asks the suggestion funnel to
+// decide whether to propose a refinement. Fire-and-forget: failures are
+// warned, not surfaced to the user.
+async function fireProposalForDraft(draftId) {
+  try {
+    const drafts = await getAllDrafts();
+    const fresh = drafts.find((d) => d.id === draftId);
+    if (!fresh) return;
+    const result = await maybeProposeFromOutcome(fresh);
+    if (result?.error) console.warn("proposeSuggestion failed:", result.error);
+  } catch (e) {
+    console.warn("fireProposalForDraft failed:", e);
+  }
+}
+
 async function saveManagerialRewrite(draft) {
   const wrap = el("revisitCard")?.querySelector(".r-mgrrw");
   const text = (wrap?.querySelector(".mgr-rw-text")?.value || "").trim();
@@ -1805,17 +2212,12 @@ async function saveManagerialRewrite(draft) {
   await updateDraft(draft.id, { outcome: "managerial_rewrite", manager_rewrite_text: text });
   if (draft.library_entry_id) {
     await bumpScore(draft.library_entry_id, "manager_approved", 5);
-    // Fire-and-forget: ask the LLM to propose a library refinement based on
-    // what the manager actually changed. Surfaces in the suggestion review
-    // queue. Per lib/suggestions.js, this should not block the UI.
-    proposeSuggestion({
-      entryId: draft.library_entry_id,
-      draftId: draft.id,
-      userOutput: chosenAssistantReply(draft),
-      finalOutput: text,
-      trigger: "managerial_rewrite"
-    }).catch((e) => console.warn("proposeSuggestion failed:", e));
   }
+  // Fire-and-forget: pull the freshly-stamped draft and ask the suggestion
+  // funnel to propose a library refinement. The funnel compares the agent's
+  // self-edit (what was sent) against the manager's rewrite — the delta the
+  // manager actually objected to.
+  fireProposalForDraft(draft.id);
   setStatus(el("formStatus"), "Logged managerial rewrite (+5, same weight as manager approved).", "ok");
   state.revisitMgrRewriteDraftId = null;
   await focusAssistantPanel();
@@ -1961,6 +2363,9 @@ async function handleRevisit(action, draft, conversationId) {
       const amount = action === "sent" ? 2 : 5;
       await bumpScore(draft.library_entry_id, field, amount);
     }
+    // Outcome confirmed — let the funnel propose a refinement if there's a
+    // meaningful diff between the AI output and what was actually sent.
+    fireProposalForDraft(draft.id);
     setStatus(el("formStatus"), `Logged: ${action.replace(/_/g, " ")}.`, "ok");
     await focusAssistantPanel();
     el("formStatus")?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
@@ -1978,6 +2383,7 @@ async function handleRevisit(action, draft, conversationId) {
 
 // ---------- init ----------
 (async function init() {
+  await ensureWindowId();
   await loadSettings();
   await renderDropdowns();
   await renderLibraryPicker();
@@ -1985,6 +2391,10 @@ async function handleRevisit(action, draft, conversationId) {
   await renderRevisitCard();
   await consumeRevisitPendingAction();
   await refreshStepOneSlot();
+  // Library & Learning section is now default-expanded; populate it.
+  if (el("historyPanel")?.classList.contains("open")) {
+    await renderLibraryPanel();
+  }
   loadCustomerHealth().catch(() => {});
   chrome.tabs.onActivated?.addListener?.(() => {
     renderRevisitCard().catch(() => {});
@@ -1996,6 +2406,19 @@ async function handleRevisit(action, draft, conversationId) {
       renderRevisitCard().catch(() => {});
       refreshStepOneSlot().catch(() => {});
       loadCustomerHealth().catch(() => {});
+    }
+  });
+  // Live-refresh the Library panel when the underlying library changes
+  // (suggestion added by fire-and-forget LLM call, suggestion accepted in
+  // another window, draft logged from a content-script context, etc.).
+  // Without this the Suggestions tile shows a stale count until the panel
+  // is reopened.
+  chrome.storage.onChanged?.addListener?.((changes, area) => {
+    if (area !== "local") return;
+    const touched = changes.library_v3 || changes.draft_log;
+    if (!touched) return;
+    if (el("historyPanel")?.classList.contains("open")) {
+      renderLibraryPanel().catch(() => {});
     }
   });
 })();

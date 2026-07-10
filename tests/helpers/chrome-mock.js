@@ -62,6 +62,9 @@ function installChromeMock() {
       onUpdated: { addListener: vi.fn() },
       onActivated: { addListener: vi.fn() },
     },
+    windows: {
+      getCurrent: vi.fn(async () => ({ id: 1 })),
+    },
     scripting: {
       executeScript: vi.fn(async () => [{ result: null }]),
     },

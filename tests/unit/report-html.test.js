@@ -31,7 +31,14 @@ const team = {
     { rank: 2, name: "Refunds", conversations: 8, sentiment: "frustrated", rootCause: "documentation_gap", evidenceTicketIds: [] }
   ],
   timeWaster: { topic: "Free plan upgrade pitch", occurrences: 4, category: "process_repetition", savedReplyDraft: "Hi! Reaching out…" },
-  oiVerdict: { frictionPoint: "Mobile/desktop separation", outcomeHoursSavedPerWeek: 4.5, inputEffort: "low", verdict: "yes", condition: null, rationale: "Already in early access — promote to GA." },
+  oiVerdict: {
+    frictionPoint: "Mobile/desktop separation",
+    primaryGrowthLever: "churn",
+    mveBootstrap: "Add a saved-reply linking the workaround doc.",
+    escalationVerdict: "escalate",
+    outcomeHoursSavedPerWeek: 4.5, inputEffort: "low",
+    verdict: "yes", condition: null, rationale: "Already in early access — promote to GA."
+  },
   knowledgeGaps: [{ topic: "Subdomain routing", ticketCount: 2, recommendation: "Doc snippet" }],
   caveats: ["Happiness n=2 too small to weigh."]
 };
@@ -82,6 +89,54 @@ describe("buildReportHtml", () => {
     expect(html).toContain("Where did the visitor device rule go?");
     expect(html).toContain("40872"); // evidence ticket
     expect(html).toContain("oi-verdict yes");
+  });
+
+  it("O/I card surfaces the new growth lever pill, escalation verdict, and bootstrap line", () => {
+    const html = buildReportHtml({ teamWpsa: team });
+    expect(html).toContain("escalation-verdict escalation-escalate");
+    expect(html).toContain("ESCALATE");
+    expect(html).toContain("lever-pill lever-churn");
+    expect(html).toContain("Churn");
+    expect(html).toContain("Bootstrap option");
+    expect(html).toContain("Add a saved-reply linking the workaround doc.");
+  });
+
+  it("O/I card omits new fields gracefully when they're null", () => {
+    const minimal = JSON.parse(JSON.stringify(team));
+    minimal.oiVerdict.primaryGrowthLever = null;
+    minimal.oiVerdict.mveBootstrap = null;
+    minimal.oiVerdict.escalationVerdict = null;
+    const html = buildReportHtml({ teamWpsa: minimal });
+    // Pill class definitions live in the embedded CSS but no pill markup
+    // should be rendered when primaryGrowthLever is null.
+    expect(html).not.toMatch(/class="lever-pill/);
+    expect(html).not.toContain("Bootstrap option");
+    // Falls back to "WATCH" headline class when escalationVerdict missing.
+    expect(html).toContain("escalation-watch");
+  });
+
+  it("header shows author + analysed agent when they differ", () => {
+    const html = buildReportHtml({
+      personalWpsa: { ...personal, meta: { ...personal.meta, agent: "Erica Franz" } },
+      reportAuthor: "Nwachukwu Okafor"
+    });
+    expect(html).toContain("About Erica Franz · prepared by Nwachukwu Okafor");
+  });
+
+  it("header collapses to 'By <author>' when author = analysed agent", () => {
+    const html = buildReportHtml({
+      personalWpsa: personal,
+      reportAuthor: "Nwachukwu Okafor"
+    });
+    expect(html).toContain("By Nwachukwu Okafor");
+    expect(html).not.toMatch(/About .* · prepared by/);
+  });
+
+  it("header omits attribution gracefully when both blank", () => {
+    const html = buildReportHtml({ teamWpsa: { ...team, meta: { ...team.meta, agent: null } } });
+    expect(html).toContain("Weekly Support Insights");
+    expect(html).not.toMatch(/By\s/);
+    expect(html).not.toMatch(/About\s/);
   });
 
   it("section 4 ask is omitted when blank", () => {

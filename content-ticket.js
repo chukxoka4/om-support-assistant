@@ -100,11 +100,38 @@
     };
   }
 
+  // Mirror of lib/draft-log-changes.js — keep in sync. Content scripts
+  // can't import ESM, so the helper is duplicated here. Tests live in
+  // tests/unit/draft-log-changes.test.js.
+  function _isQuickTransform(entry) {
+    return entry?.action_type === "quick-retone"
+        || entry?.action_type === "quick-translate";
+  }
+  function _shouldPromptForChange(oldArr, newArr) {
+    if (!Array.isArray(newArr)) return false;
+    const oldMap = new Map();
+    for (const e of oldArr || []) if (e && e.id) oldMap.set(e.id, e);
+    for (const incoming of newArr) {
+      if (!incoming || _isQuickTransform(incoming)) continue;
+      const existing = oldMap.get(incoming.id);
+      if (!existing) return true;
+      if (JSON.stringify(existing) !== JSON.stringify(incoming)) return true;
+    }
+    return false;
+  }
+
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local" || !changes.draft_log) return;
       const id = convoId();
       if (!id) return;
+      // Quick transforms (right-click improve-text / translate) write to
+      // draft_log too, but they're independent of the revisit flow. Bail
+      // early so the native confirm() doesn't pop mid-typewriter.
+      if (!_shouldPromptForChange(
+        changes.draft_log.oldValue,
+        changes.draft_log.newValue
+      )) return;
       modalDismissedForId = null;
       schedulePrompt();
     });
