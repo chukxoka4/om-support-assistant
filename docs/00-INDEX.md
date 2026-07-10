@@ -21,6 +21,7 @@ Living planning + reference docs. Read in order if you're new; jump to whichever
 - **[06-REVIEW-PLAN.md](06-REVIEW-PLAN.md)** — Q2/Q3 supervisor expectations, the May 1 reporting pitch, two-week build plan, honest gaps.
 - **[07-WPSA-REPORTER.md](07-WPSA-REPORTER.md)** — WPSiteAssist reporting tool: Friday workflow, prompt library, drift hygiene.
 - **[09-STRATEGY-AND-LAUNCH.md](09-STRATEGY-AND-LAUNCH.md)** — who's who (incl. manager Erica), the origin story, the AI Adoption Rubric as the spine, the May-8 Slack soft-launch, spawned skills, external refs.
+- **[10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md)** — execution plan for the key-less `claude-code` provider (Chrome native-messaging bridge → local Claude Code CLI on the Enterprise seat) that un-pends the LLM features, plus the read-only support-desk KB reasoning layer. Sliced (0–7) for fresh-session pickup; decisions live in DECISIONS D34–D38 + DEC-F/G.
 - **[CONVENTIONS.md](CONVENTIONS.md)** — branch model, commit norms, pre-commit hook contract, test rules, naming, doc discipline.
 - **[SESSION-HISTORY.md](SESSION-HISTORY.md)** — which session built what; provenance index for a future owner / migration.
 

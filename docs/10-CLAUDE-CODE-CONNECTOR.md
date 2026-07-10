@@ -1,6 +1,7 @@
 # 10 — Claude Code Connector (Enterprise-seat LLM routing)
 
-**Status: PLANNED — no code written yet.** This document is the execution plan.
+**Status: Slice 0 DONE (2026-07-10) — decisions ratified, no code yet.**
+Slices 1–7 remain. This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -172,29 +173,30 @@ which keeps the provider file unchanged except for the transport line.
 
 ## 4. Decisions to ratify (flag these to the user in Slice 0 — do NOT silently assume)
 
-These were proposed in the design conversation (2026-07-10 session) and leaned
-"yes", but each slice that depends on one must confirm it's recorded in
-[DECISIONS.md](DECISIONS.md) first:
+DEC-A…E were proposed in the design conversation (2026-07-10 session) and
+**RATIFIED as-written by the owner on 2026-07-10 (Slice 0)** — recorded in
+[DECISIONS.md](DECISIONS.md) as D34–D38 respectively. Each slice that depends on
+one still verifies the DECISIONS.md entry before relying on it.
 
-- **DEC-A — Default provider.** When the bridge is enabled, `claude-code` is
-  the default for *every* dispatcher call. Explicit `provider` args from the UI
-  still win (agnosticism preserved).
-- **DEC-B — Third-party gating.** Gemini and OpenAI key fields (and their
-  selectability) move behind an explicit "Third-party providers" opt-in toggle
-  in options, with a one-line data warning. Direct-API Claude
-  ([providers/claude.js](../providers/claude.js)) stays un-gated — same
+- **DEC-A — Default provider (RATIFIED 2026-07-10 → D34).** When the bridge is
+  enabled, `claude-code` is the default for *every* dispatcher call. Explicit
+  `provider` args from the UI still win (agnosticism preserved).
+- **DEC-B — Third-party gating (RATIFIED 2026-07-10 → D35).** Gemini and OpenAI
+  key fields (and their selectability) move behind an explicit "Third-party
+  providers" opt-in toggle in options, with a one-line data warning. Direct-API
+  Claude ([providers/claude.js](../providers/claude.js)) stays un-gated — same
   destination (Anthropic), different auth.
-- **DEC-C — Bridge shape.** Zero-dependency Node script spawning `claude -p`
-  per call (not the Agent SDK, not a localhost HTTP server). Host manifest
-  `allowed_origins` locked to this extension's ID.
-- **DEC-D — Polish timeout.** `polishText`/`polishBullets` get a
-  provider-aware timeout: keep 5000 ms for HTTP providers, use
-  `CLAUDE_CODE_TIMEOUT_MS` (proposed 30000) when the resolved default is
+- **DEC-C — Bridge shape (RATIFIED 2026-07-10 → D36).** Zero-dependency Node
+  script spawning `claude -p` per call (not the Agent SDK, not a localhost HTTP
+  server). Host manifest `allowed_origins` locked to this extension's ID.
+- **DEC-D — Polish timeout (RATIFIED 2026-07-10 → D37).** `polishText`/
+  `polishBullets` get a provider-aware timeout: keep 5000 ms for HTTP providers,
+  use `CLAUDE_CODE_TIMEOUT_MS` (30000) when the resolved default is
   `claude-code`. D32's "best-effort, never fails the flow" contract is
   preserved — only the budget changes.
-- **DEC-E — Availability semantics.** `claude-code` counts as "available" when
-  a stored status flag says the last bridge ping succeeded (set by options
-  "Test connection"), not when a key exists.
+- **DEC-E — Availability semantics (RATIFIED 2026-07-10 → D38).** `claude-code`
+  counts as "available" when a stored status flag says the last bridge ping
+  succeeded (set by options "Test connection"), not when a key exists.
 - **DEC-F — KB reasoning layer (RATIFIED 2026-07-10).** The bridge supports two
   call modes. `transform`: stateless, **no tools**, `--max-turns 1` (polish,
   retone/translate, suggestions, ranker). `reason`: agentic — working
@@ -230,18 +232,19 @@ Rules for every slice (from CONVENTIONS.md + ARCHITECTURE.md — non-negotiable)
 
 ---
 
-### Slice 0 — Ratify decisions + record the plan (no code)
+### Slice 0 — Ratify decisions + record the plan (no code) — ✅ DONE 2026-07-10
 
 **Goal:** decisions DEC-A…E confirmed with the user and recorded; this doc
 committed.
 
-1. Present DEC-A…E to the user; adjust this doc to match the answers.
-2. Add the accepted decisions to [DECISIONS.md](DECISIONS.md) (next D-numbers,
-   house format: Decision / Why / Revisit when).
-3. Update [00-INDEX.md](00-INDEX.md) to list this doc; add a line to
+1. ✅ Presented DEC-A…E to the owner; all confirmed **as-written** (no
+   adjustments). Owner directive: stay on `joseph-dev`, no branching.
+2. ✅ Added to [DECISIONS.md](DECISIONS.md) as D34 (DEC-A), D35 (DEC-B),
+   D36 (DEC-C), D37 (DEC-D), D38 (DEC-E) — house format.
+3. ✅ Listed this doc in [00-INDEX.md](00-INDEX.md); added the session row to
    [SESSION-HISTORY.md](SESSION-HISTORY.md).
 
-**Acceptance:** docs committed; user has explicitly confirmed each decision.
+**Acceptance:** docs committed; user has explicitly confirmed each decision. ✅
 
 ---
 

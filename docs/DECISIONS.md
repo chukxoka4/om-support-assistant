@@ -336,6 +336,56 @@ Format: short. Two paragraphs maximum per decision. If a decision needs more tha
 
 ---
 
+## D34 — `claude-code` is the default provider when the bridge is enabled
+
+**Decision.** Once the Claude Code connector is enabled (bridge installed + last ping OK), `claude-code` becomes the default provider for *every* dispatcher call in [providers/index.js](../providers/index.js). An explicit `provider` argument from the UI still wins — the LLM-agnostic abstraction is preserved; Gemini/OpenAI/direct-Claude remain selectable. DEC-A of [10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md); ratified with the user 2026-07-10.
+
+**Why.** The whole point of the connector is to un-pend LLM features by routing customer data through the Enterprise seat (claude.ai OAuth) instead of personal API keys. Making it the default is what actually lifts the pend without asking the agent to re-select a provider on every call. Back-compat is handled by the Slice-3 resolution rule (fill gaps only, never clobber a stored `default_provider`).
+
+**Revisit when.** A per-call default other than `claude-code` is wanted, or the resolution order in `resolveDefaultProvider()` needs to change.
+
+---
+
+## D35 — Third-party providers (Gemini/OpenAI) are gated behind an explicit opt-in
+
+**Decision.** Gemini and OpenAI key fields, and their selectability, move behind an explicit "Third-party providers" opt-in toggle (`allowThirdParty`, default `false`) in options, with a one-line data warning. Direct-API Claude ([providers/claude.js](../providers/claude.js)) stays **un-gated** — same destination (Anthropic), different auth. DEC-B; ratified 2026-07-10.
+
+**Why.** The pend exists because customer ticket text was leaving under personal, non-enterprise terms. Gating the two genuinely third-party destinations behind a conscious opt-in makes the data path honest by default while keeping the abstraction agnostic for anyone who deliberately wants them. Direct-API Claude goes to the same processor as the connector, so it doesn't need the gate.
+
+**Revisit when.** Awesome Motive gets enterprise terms for Gemini/OpenAI, or the opt-in proves to be friction with no safety benefit.
+
+---
+
+## D36 — The bridge is a zero-dependency Node script spawning `claude -p` per call
+
+**Decision.** The native-messaging host (`bridge/claude-bridge.js`) is a zero-dependency Node script (builtins only) that spawns `claude -p --output-format json …` once per call — not the `@anthropic-ai/claude-agent-sdk`, not a localhost HTTP server. The host manifest's `allowed_origins` is locked to this extension's ID. DEC-C; ratified 2026-07-10.
+
+**Why.** Per-call CLI spawn keeps the bridge outside the extension bundle with no npm runtime dependency, honouring the "no new runtime dependencies in the extension" rule. The Agent SDK reuses the same CLI login but adds a dependency; a localhost server adds a listening port and lifecycle. If cold-spawn latency bites, Slice 7 switches transport to a warm `connectNative` port — the framed stdio protocol already supports it.
+
+**Revisit when.** Per-call spawn latency is unacceptable in daily use (→ Slice 7 warm port), or the SDK gains something the CLI can't do.
+
+---
+
+## D37 — Polish timeout is provider-aware (5 s HTTP / 30 s claude-code)
+
+**Decision.** [lib/text-polish.js](../lib/text-polish.js) `polishText`/`polishBullets` get a provider-aware timeout: keep `5000` ms for HTTP providers, use `CLAUDE_CODE_TIMEOUT_MS` (**30000**) when the resolved default is `claude-code`. Every other D32 behaviour — min length, silent fallback to original, 2.5× length guard, "best-effort, never fails the flow" — is preserved; only the budget changes. DEC-D; ratified 2026-07-10. Addendum to [D32](#d32-text-polish-is-best-effort-and-never-fails-the-flow).
+
+**Why.** Spawning `claude -p` cold routinely exceeds 5 s. Without the wider budget, report polish would *silently always fall back to originals* (D32's contract) and look "fine" while doing nothing — the most dangerous kind of no-op. The Slice-5 acceptance test explicitly proves the polish actually ran (a deliberate typo is fixed), not the fallback.
+
+**Revisit when.** Warm-port transport (Slice 7) makes cold-spawn latency a non-issue, at which point the two budgets could converge.
+
+---
+
+## D38 — `claude-code` availability is ping-based, not key-based
+
+**Decision.** `claude-code` counts as "available" in `getAvailableProviders()` when a stored status flag (`claudeCodeStatus.enabled && lastPingOk`, written only by the options "Test connection" flow) says the last bridge ping succeeded — not when a key exists (it has none). DEC-E; ratified 2026-07-10.
+
+**Why.** The connector is key-less, so the existing "available = has a non-empty key" definition can't apply to it. A successful ping is the honest signal that the bridge is installed and `claude` is logged in on this machine. This keeps availability truthful per-machine (the install is per-user, not centrally deployable) and drives both the default-resolution rule (D34) and the options default-provider select.
+
+**Revisit when.** The bridge gains a heartbeat/health channel richer than a one-shot ping, or availability needs to reflect live seat rate-limit state.
+
+---
+
 ## How to add a new decision
 
 Append to this file. New entry as `## DXX — short title`. Decision · Why · Revisit when. Two paragraphs max. If you can't fit it in two paragraphs, the decision is probably not yet decided — keep iterating.
