@@ -44,6 +44,7 @@ import { parseWpsaJson } from "./lib/wpsa-schema.js";
 import { buildReportHtml } from "./lib/report-html.js";
 import { buildSlackSnippet } from "./lib/report-slack.js";
 import { chosenAssistantReply } from "./lib/revisit-helpers.js";
+import { bridgeErrorHint } from "./lib/bridge-error-hint.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -1494,7 +1495,7 @@ el("generateBtn").addEventListener("click", async () => {
     const result = await compose({ ...v, conversationId, ticketUrl, rewriteOf: state.rewriteOf, suggestionLog, customerContext });
     if (result.error) {
       el("output").innerHTML = "";
-      setStatus(el("formStatus"), result.error, "error");
+      setStatus(el("formStatus"), bridgeErrorHint(result.error), "error");
       return;
     }
     state.lastDraftId = result.draftId;

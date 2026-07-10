@@ -82,14 +82,17 @@ If you're tasked with…
 3. Repositories       lib/storage.js · lib/intercom-client.js · lib/ticket.js · lib/html.js
                       lib/toast.js · lib/wpsa-schema.js · lib/paginate.js · lib/charts.js
                       lib/diff-text.js · lib/searchable-select.js (+ .css)
-4. Infrastructure     providers/{gemini,claude,openai}.js · providers/index.js
+4. Infrastructure     providers/{gemini,claude,openai,claude-code}.js · providers/index.js
+                      bridge/*  (native-messaging host — OUTSIDE the extension)
 5. Data               prompts/om-seeds.json · prompts/house-style.md · prompts/products/*.md
 ```
+
+**The Claude Code connector** ([bridge/](../bridge/), [docs/10](10-CLAUDE-CODE-CONNECTOR.md)): a key-less `claude-code` provider routes LLM calls through the locally-installed Claude Code CLI on the agent's **Enterprise seat** (claude.ai OAuth), so customer data never leaves under personal API terms — this is what un-pended the LLM features. It's the default once connected (Options/side-panel → "Test connection"); Gemini/OpenAI are now behind a third-party opt-in. Compose runs in `reason` mode so the model searches the local read-only support-desk KB while drafting.
 
 **Core entities in storage:**
 - `library_v3` (`chrome.storage.local`) — seeded prompt library + auto-grown entries. 18 seeds at install. Score weights: manager_approved=5, sent_as_is=2, rewrites_absorbed=1, initial_uses=0.25.
 - `draft_log` (`chrome.storage.local`) — every compose, every quick transform, every Step-1/Step-2 outcome. Append-only.
-- `intercom_config`, `report_config`, `api_keys`, `default_provider`, `ranker_mode` (`chrome.storage.sync`) — user settings, cross-device.
+- `intercom_config`, `report_config`, `api_keys`, `default_provider`, `ranker_mode`, `claude_code_status`, `allow_third_party` (`chrome.storage.sync`) — user settings, cross-device.
 - `intercom_snapshot_cache` (`chrome.storage.session`) — 5-minute per-email customer snapshots.
 
 **The compose pipeline** ([lib/compose.js](../lib/compose.js)):

@@ -136,27 +136,45 @@ Rules are evaluated top-to-bottom; first match wins. The `reason` string surface
 
 ---
 
-## Provider dispatch (Gemini / Claude / OpenAI)
+## Provider dispatch (Claude Code / Claude / Gemini / OpenAI)
 
 The compose pipeline and quick transforms both go through [providers/index.js](../providers/index.js).
 
 ### Defaults
 
-| Provider | Default model | `max_tokens` |
+| Provider | Default model | Auth / transport |
 |---|---|---|
-| Gemini | `gemini-2.5-flash` | unconstrained (we don't pass it) |
-| Claude | `claude-sonnet-4-6` | 2048 (hardcoded — bug E2 plans 4096 across all) |
-| OpenAI | `gpt-4o` | passes via `max_tokens` |
+| **`claude-code`** | `claude-sonnet-4-6` (bridge `DEFAULT_MODEL`) | **key-less** — native messaging → local Claude Code CLI on the Enterprise seat |
+| Claude | `claude-sonnet-4-6` | API key, direct `api.anthropic.com` |
+| Gemini | `gemini-2.5-flash` | API key (third-party, gated) |
+| OpenAI | `gpt-4o` | API key (third-party, gated) |
 
-The user's "default provider" is stored in `chrome.storage.sync` under `default_provider`. They can override per-request via the side-panel provider dropdown.
+Default resolution is `resolveDefaultProvider()` in [lib/storage.js](../lib/storage.js): a stored `default_provider` if still available, else the connector, else the first available. The UI can override per-request via the provider dropdown.
+
+### Availability & gating
+
+`getAvailableProviders()` returns: `claude-code` when `claude_code_status.enabled && lastPingOk` (set by options "Test connection"); `claude` when keyed (un-gated — same destination as the connector); `gemini`/`openai` only when keyed **and** `allow_third_party` is on. See DECISIONS D34–D38.
+
+### The Claude Code bridge (key-less connector)
+
+`providers/claude-code.js` talks to a native-messaging host at
+`com.optinmonster.claude_bridge` (the [bridge/](../bridge/) folder, outside the
+extension). The bridge spawns `claude -p` on the agent's Enterprise seat, so
+customer data reaches only Anthropic under the Enterprise agreement. Two call
+modes (DEC-F): `transform` (no tools) and `reason` (read-only `Read,Grep,Glob`
+over the local support-desk KB — compose only). Install/troubleshooting live in
+[bridge/README.md](../bridge/README.md); the full design is
+[docs/10-CLAUDE-CODE-CONNECTOR.md](10-CLAUDE-CODE-CONNECTOR.md). Transport today
+is one-shot `sendNativeMessage` (a long-lived `connectNative` port is a
+deliberately-deferred latency option — see Slice 7).
 
 ### Auth
 
-API keys live in `chrome.storage.sync` under `api_keys: { gemini, claude, openai }`. Set in Options or side-panel Settings (mirrored). Available providers are computed by `getAvailableProviders()` — only providers with non-empty keys appear as options.
+API keys live in `chrome.storage.sync` under `api_keys: { gemini, claude, openai }`. Set in Options or side-panel Settings (mirrored). The connector is key-less; its status lives under `claude_code_status`.
 
 ### Error shape
 
-Every provider returns either `{ text, provider }` on success or `{ error, provider }` on failure. The dispatcher doesn't throw; consumers check for `result.error`.
+Every provider returns either `{ text, provider }` on success or `{ error, provider }` on failure. The dispatcher doesn't throw; consumers check for `result.error`. Side-panel compose runs bridge errors through `bridgeErrorHint()` ([lib/bridge-error-hint.js](../lib/bridge-error-hint.js)) to append an actionable fix ("Test connection / reinstall the bridge").
 
 ---
 
@@ -210,7 +228,9 @@ Where every persistent piece of data lives.
 | Key | What it holds |
 |---|---|
 | `api_keys` | `{ gemini, claude, openai }` — provider keys |
-| `default_provider` | String — `"gemini"` / `"claude"` / `"openai"` |
+| `default_provider` | String — `"claude-code"` / `"claude"` / `"gemini"` / `"openai"` |
+| `claude_code_status` | `{ enabled, lastPingAt, lastPingOk, kb, lastError }` — connector health (written by options "Test connection") |
+| `allow_third_party` | Boolean — third-party (Gemini/OpenAI) opt-in gate, default `false` |
 | `intercom_config` | `{ apiKey }` |
 | `report_config` | `{ agentName }` — the report author name |
 | `ranker_mode` | `"lexical"` or `"llm"` — F1 toggle |

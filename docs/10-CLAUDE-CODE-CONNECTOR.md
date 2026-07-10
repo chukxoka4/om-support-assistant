@@ -1,15 +1,19 @@
 # 10 — Claude Code Connector (Enterprise-seat LLM routing)
 
-**Status: Slices 0–2 DONE (2026-07-10).** Decisions ratified (DEC-A…E → D34–D38);
-the native-messaging bridge is built and verified live; the key-less
-`claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
+**Status: ALL SLICES DONE (0–7, 2026-07-10).** Decisions ratified (DEC-A…G →
+D34–D40); the key-less `claude-code` connector is built, wired, UI-enabled,
+report-safe, KB-reasoning, and hardened. The LLM-features pend is lifted. Only
+the optional live 5-flow smoke (Slice 5, owner's Chrome) remains.
+
+Historical note — the native-messaging bridge is built and verified live; the
+key-less `claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
 smoke passed (side-panel call returned `OK`; installer now covers all browsers).
-Slices 3–6 done: storage rules, Options + side-panel UI, the provider-aware
-polish timeout (pend lifted, see 09-STRATEGY-AND-LAUNCH.md), and the KB reasoning
-layer (compose greps the read-only KB; DEC-G verified byte-identical). A live
-5-flow verification remains (owner's Chrome; see Slice 5). **Next: Slice 7**
-(optional hardening: warm-port latency, pre-warm ping, error surfacing, final
-docs sweep). This document is the execution plan.
+**All slices complete (0–7).** Storage rules, Options + side-panel UI, the
+provider-aware polish timeout (pend lifted), the KB reasoning layer (DEC-G
+verified byte-identical), and hardening (error surfacing + docs sweep; the
+connectNative latency option deliberately deferred — see Slice 7). The only open
+item is the optional **live 5-flow verification** in the owner's Chrome (Slice 5)
+— everything routes through the same bridge transform already proven live.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -738,18 +742,34 @@ code never writes there).
 
 ---
 
-### Slice 7 — Hardening + close-out (optional but recommended)
+### Slice 7 — Hardening + close-out — ✅ DONE 2026-07-10 (error surfacing + docs); latency option deliberately deferred
 
-- **Latency option:** if per-call `claude -p` spawn is too slow in daily use,
-  switch `providers/claude-code.js` to `chrome.runtime.connectNative` (one
-  long-lived port; the bridge process stays warm and serially handles frames).
-  Bridge already speaks framed stdio, so this is transport-only.
-- **Pre-warm:** fire a `{ ping: true }` on side-panel open so the first real
-  call doesn't pay host-startup cost.
-- **Error surfacing:** a one-line "bridge not installed / claude not logged
-  in" hint in the side panel when `claude-code` is default but a call errors.
-- Final docs sweep: 01-PRODUCT.md present-state, CONTEXT-MAP.md tour,
-  INTEGRATIONS.md entry for the bridge.
+**Done:**
+- **Error surfacing:** [lib/bridge-error-hint.js](../lib/bridge-error-hint.js)
+  (pure, unit-tested) turns a bare bridge failure ("Native host has exited",
+  "not logged in", "host not found") into an actionable message — *"Fix: open
+  Options → Test connection, or reinstall the bridge (see bridge/README.md)."*
+  Wired into the side-panel compose error path ([sidepanel.js](../sidepanel.js));
+  non-bridge errors pass through unchanged.
+- **Docs sweep:** INTEGRATIONS.md provider-dispatch section rewritten (four
+  providers, availability/gating, bridge subsection, `bridgeErrorHint`) + sync
+  storage table (`claude_code_status`, `allow_third_party`); CONTEXT-MAP.md tour
+  (layer-4 gains claude-code + `bridge/`, a connector paragraph, storage keys);
+  01-PRODUCT.md present-state (connector + KB reasoning). Suite 472 green.
+
+**Deliberately deferred — the `connectNative` warm-port latency option + pre-warm ping.**
+Rationale (a hardening *decision*, not an omission): the measured cold `claude -p`
+spawn is ~5 s, which is small next to the workloads that dominate — reason-mode
+compose (30–90 s) and the 30 s polish budget — so the latency win is marginal.
+Against that: it would replace the *proven* one-shot `sendNativeMessage` path
+with a persistent port needing request-id correlation, disconnect handling, and
+pending-leak timeouts; it can't be verified against real Chrome headlessly here;
+and it would invalidate the existing provider tests. Net: not worth
+destabilising a working transport for an internal single-user tool. The bridge
+is already id-ready (it serialises replies FIFO and the enqueue path can echo a
+request id) if this is picked up later — do it with a `sendNativeMessage`
+fallback and a live Chrome smoke. Pre-warm is meaningless without it (each
+`sendNativeMessage` spawns a fresh host), so it's deferred too.
 
 ---
 
