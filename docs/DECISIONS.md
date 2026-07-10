@@ -322,6 +322,8 @@ Format: short. Two paragraphs maximum per decision. If a decision needs more tha
 
 **Why.** *"Clean up the grammar if there is a successful connection but if there is none does not fail and just uses what is there… I don't have to intervene except it is not necessary."* Copy-editor only, no paraphrasing. See [08 §8](08-REPORT-SUGGESTIONS-V2.md).
 
+**Addendum (2026-07-10, Slice 5 → see [D37](#d37--polish-timeout-is-provider-aware-5-s-http--30-s-claude-code)).** The 5 s timeout is now **provider-aware**: it stays 5 s for HTTP providers but becomes 30 s when the resolved default is `claude-code` (a cold `claude -p` spawn routinely exceeds 5 s). Everything else here — min length, silent fallback, 2.5× length guard, "always returns a string" — is unchanged. `polishTimeoutFor(provider)` is the pure mapping; `text-polish.js` resolves the serving provider via `resolveDefaultProvider()`.
+
 **Revisit when.** Polish is wanted on customer-facing draft text (it isn't today — that path has its own compose pipeline and house style).
 
 ---

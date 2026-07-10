@@ -1,8 +1,8 @@
 // Best-effort grammar polish: always returns a string, never throws.
 // Failures (timeout, error, empty) fall back to the original input.
 
-import { describe, it, expect, vi } from "vitest";
-import { polishText, polishBullets } from "../../lib/text-polish.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { polishText, polishBullets, polishTimeoutFor } from "../../lib/text-polish.js";
 
 const ok = (text) => async () => ({ text, provider: "test" });
 const errored = (msg) => async () => ({ text: "", error: msg });
@@ -82,5 +82,66 @@ describe("polishBullets", () => {
   it("returns [] for non-array input", async () => {
     expect(await polishBullets(null)).toEqual([]);
     expect(await polishBullets(undefined)).toEqual([]);
+  });
+});
+
+// --- DEC-D / D37: provider-aware timeout (D32 contract otherwise preserved) ---
+describe("polishTimeoutFor", () => {
+  it("gives the connector a wider budget than HTTP providers", () => {
+    expect(polishTimeoutFor("claude-code")).toBe(30000);
+    expect(polishTimeoutFor("claude")).toBe(5000);
+    expect(polishTimeoutFor("gemini")).toBe(5000);
+    expect(polishTimeoutFor(null)).toBe(5000);
+    expect(polishTimeoutFor(undefined)).toBe(5000);
+  });
+});
+
+describe("polishText — timeout selection", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("does NOT resolve a provider when timeoutMs is passed explicitly", async () => {
+    const resolver = vi.fn(async () => "claude-code");
+    const out = await polishText("hello there, fix this", {
+      _callLLM: ok("Hello there, fix this."),
+      timeoutMs: 1000,
+      _resolveDefaultProvider: resolver,
+    });
+    expect(out).toBe("Hello there, fix this.");
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("uses the 30s connector budget so a slow claude-code call still wins", async () => {
+    vi.useFakeTimers();
+    const callLLM = () => new Promise((r) => setTimeout(() => r({ text: "CLEANED TEXT" }), 10000));
+    const p = polishText("this sentence needs a fix", {
+      _callLLM: callLLM,
+      _resolveDefaultProvider: async () => "claude-code",
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await p).toBe("CLEANED TEXT");
+  });
+
+  it("keeps the 5s budget for HTTP providers, so the same slow call falls back", async () => {
+    vi.useFakeTimers();
+    const callLLM = () => new Promise((r) => setTimeout(() => r({ text: "CLEANED TEXT" }), 10000));
+    const original = "this sentence needs a fix";
+    const p = polishText(original, {
+      _callLLM: callLLM,
+      _resolveDefaultProvider: async () => "claude",
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(await p).toBe(original); // timed out at 5s → original (D32 silent fallback)
+  });
+});
+
+describe("polishBullets — resolves the budget once for the batch", () => {
+  it("consults the provider resolver a single time", async () => {
+    const resolver = vi.fn(async () => "claude-code");
+    const out = await polishBullets(["aaa is wrong here", "bbb is wrong here"], {
+      _callLLM: ok("cleaned"),
+      _resolveDefaultProvider: resolver,
+    });
+    expect(out).toEqual(["cleaned", "cleaned"]);
+    expect(resolver).toHaveBeenCalledTimes(1);
   });
 });

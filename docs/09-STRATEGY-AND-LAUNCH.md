@@ -151,3 +151,20 @@ land a finished artefact** in this repo. See
    digest format.
 4. **Search before you claim ignorance.** The Claude Design episode is the
    cautionary tale.
+
+## The LLM-features pend is lifted (2026-07-10)
+
+LLM-assisted features were operationally pended because they sent customer
+ticket text to third-party LLM APIs under **personal** API keys — a
+data-governance problem. The [Claude Code connector](10-CLAUDE-CODE-CONNECTOR.md)
+lifts it: a key-less `claude-code` provider routes every LLM call through the
+locally-installed Claude Code CLI on the agent's **Claude Enterprise seat**
+(verified: `claude auth status` → Awesome Motive Enterprise / firstParty), so
+customer data reaches only Anthropic under the Enterprise agreement. It's the
+default provider once connected; Gemini/OpenAI are now behind an explicit
+opt-in (DEC-B/D35). All five LLM callers (compose, quick-transform, suggestions,
+text-polish, library-rank) route through the dispatcher, so the switch is
+automatic. The one report-specific risk — the 5 s polish timeout silently
+falling back to originals on a slow cold spawn — is handled by the
+provider-aware budget (30 s for the connector, DEC-D/D37). See the connector doc
+for the slice history and the remaining live-verification steps.

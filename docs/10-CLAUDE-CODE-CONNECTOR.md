@@ -4,10 +4,10 @@
 the native-messaging bridge is built and verified live; the key-less
 `claude-code` provider is wired into the dispatcher and manifest. Slice 2's in-Chrome
 smoke passed (side-panel call returned `OK`; installer now covers all browsers).
-Slices 3–4 done: availability/default-resolution/third-party gate in storage,
-and the Options UI to enable/test the connector + opt into third-party providers.
-**Next: Slice 5** (report-pipeline timeout + un-pend verification). Slices 6–7
-remain. This document is the execution plan.
+Slices 3–5 done: storage rules, Options + side-panel UI, and the provider-aware
+polish timeout — the LLM-features pend is lifted (see 09-STRATEGY-AND-LAUNCH.md).
+A live 5-flow verification remains (owner's Chrome; see Slice 5). **Next: Slice 6**
+(KB reasoning layer). Slice 7 (hardening) remains. This document is the execution plan.
 It is written so a fresh session (fresh agent, no prior context) can pick up any
 slice and execute it correctly. Read [../ARCHITECTURE.md](../ARCHITECTURE.md)
 first — every slice below must pass its pre-code checklist. Also read
@@ -566,7 +566,33 @@ green → side panel drafts with zero API keys stored.
 
 ---
 
-### Slice 5 — Report-pipeline timeout + un-pend verification
+### Slice 5 — Report-pipeline timeout + un-pend verification — ✅ DONE (code) 2026-07-10; ⏳ live 5-flow verification pending
+
+**Delivered:** [lib/text-polish.js](../lib/text-polish.js) timeout is now
+provider-aware (DEC-D/D37): `polishTimeoutFor(provider)` (pure, exported) →
+30000 ms for `claude-code`, 5000 ms otherwise; `polishText` resolves the serving
+provider via `resolveDefaultProvider()` (only when it's actually going to call
+the LLM), `polishBullets` resolves once per batch. Every D32 behaviour is intact
+(min length, silent fallback, 2.5× guard, always-returns-string) and proven by
+tests, including fake-timer tests that show a 10 s call *wins* under the connector
+budget but *falls back* under the 5 s HTTP budget. Tests: `text-polish.test.js`
+extended (16 total). DECISIONS D32 got the addendum; the pend is recorded as
+lifted in [09-STRATEGY-AND-LAUNCH.md](09-STRATEGY-AND-LAUNCH.md).
+
+**Verified (code-level):** all five `callLLM` callers still route through the
+dispatcher (grep confirmed: compose:99, quick-transform:62/70, suggestions:37,
+text-polish, library-rank:151 via sidepanel:695) → `resolveDefaultProvider()` →
+`claude-code` when it's the default. The bridge transform is proven live (Slice 1).
+
+> ⏳ **Remaining acceptance step (needs the owner's Chrome).** The plan's live
+> pass — exercise all five flows through the connector and prove the report typo
+> is *actually* polished (not the silent fallback). Run in the extension with
+> the connector as default and no API keys:
+> 1. compose a draft, 2. retone + translate, 3. trigger a managerial-rewrite
+> suggestion, 4. toggle the ranker to LLM, 5. the full report: enter an ask with
+> a deliberate typo + hypothesis bullets → generate prompt → build report →
+> confirm the typo is fixed and Slack delivery is unchanged. Everything routes
+> through the same bridge transform already proven, so this is confirmation.
 
 **Goal:** the weekly reporting flow works through the connector; the pend is
 formally lifted.
