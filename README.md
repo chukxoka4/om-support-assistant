@@ -61,3 +61,7 @@ npm test      # run the suite
 ## Documentation
 
 Living docs in [docs/](docs/). Start with [docs/CONTEXT-MAP.md](docs/CONTEXT-MAP.md), then drill into whatever you need — [docs/00-INDEX.md](docs/00-INDEX.md) lists everything with a one-line description.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
